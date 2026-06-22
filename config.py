@@ -1,0 +1,26 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
+MODE = os.getenv("MODE", "PAPER")
+
+PAPER_SEED_USDT = float(os.getenv("PAPER_SEED_USDT", "1000"))
+
+LEVERAGE = 4
+
+ENTRY_1_PCT = 0.02
+ENTRY_2_PCT = 0.01
+ENTRY_3_PCT = 0.01
+
+PUMP_THRESHOLD_PCT = 3.0
+
+ADD_ENTRY_PRICE_MOVE_PCT = 5.0
+
+TAKE_PROFIT_LEVERAGED_PCT = 12.0
+STOP_LOSS_LEVERAGED_PCT = -30.0
+
+KST_TIMEZONE = "Asia/Seoul"
