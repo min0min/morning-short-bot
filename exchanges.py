@@ -43,31 +43,65 @@ async def get_bitget_price(symbol):
             return float(t.get("lastPr"))
     raise ValueError(f"price not found: {symbol}")
 
-async def scan_top_pump_crosslisted(threshold_pct=3.0):
-    upbit, bithumb, futures, tickers = await get_upbit_krw_markets(), await get_bithumb_krw_markets(), await get_bitget_usdt_futures_symbols(), await get_bitget_tickers()
+async def get_crosslisted_futures_snapshot():
+    """
+    업비트 KRW + 빗썸 KRW + 비트겟 USDT 선물 교차상장 종목들의 현재가 스냅샷.
+    09:00 기준가 저장 → 09:15 현재가와 비교하는 용도.
+    """
+    upbit = await get_upbit_krw_markets()
+    bithumb = await get_bithumb_krw_markets()
+    futures = await get_bitget_usdt_futures_symbols()
+    tickers = await get_bitget_tickers()
 
     cross = upbit & bithumb & set(futures.keys())
-    candidates = []
 
+    snapshot = {}
     for t in tickers:
         base = t.get("baseCoin", "").upper()
         symbol = t.get("symbol", "")
         if base not in cross:
             continue
-
-        # Bitget ticker usually has price change percent. Field names may vary, so handle both.
-        raw_change = t.get("change24h") or t.get("priceChangePercent") or t.get("chgUtc") or 0
         try:
-            change_pct = float(raw_change) * 100 if abs(float(raw_change)) <= 1 else float(raw_change)
+            price = float(t.get("lastPr"))
         except Exception:
-            change_pct = 0.0
+            continue
 
-        if change_pct >= threshold_pct:
+        snapshot[base] = {
+            "base": base,
+            "symbol": symbol,
+            "price": price
+        }
+
+    return snapshot
+
+async def scan_top_15min_pump_crosslisted(baseline_snapshot, threshold_pct=3.0):
+    """
+    09:00 저장 가격 대비 09:15 현재 가격 상승률 계산.
+    조건 만족 종목 중 가장 많이 튄 1개만 반환.
+    """
+    current = await get_crosslisted_futures_snapshot()
+    candidates = []
+
+    for base, now in current.items():
+        old = baseline_snapshot.get(base)
+        if not old:
+            continue
+
+        old_price = float(old["price"])
+        now_price = float(now["price"])
+
+        if old_price <= 0:
+            continue
+
+        pump_pct = ((now_price - old_price) / old_price) * 100
+
+        if pump_pct >= threshold_pct:
             candidates.append({
                 "base": base,
-                "symbol": symbol,
-                "change_pct": change_pct,
-                "price": float(t.get("lastPr"))
+                "symbol": now["symbol"],
+                "change_pct": pump_pct,
+                "price": now_price,
+                "baseline_price": old_price
             })
 
     candidates.sort(key=lambda x: x["change_pct"], reverse=True)

@@ -5,6 +5,7 @@ from datetime import datetime
 DATA_DIR = "data"
 STATE_PATH = os.path.join(DATA_DIR, "state.json")
 TRADES_PATH = os.path.join(DATA_DIR, "trades.json")
+BASELINE_PATH = os.path.join(DATA_DIR, "baseline_0900.json")
 
 DEFAULT_STATE = {
     "running": False,
@@ -53,3 +54,19 @@ def append_trade(trade):
     trades.append(trade)
     with open(TRADES_PATH, "w", encoding="utf-8") as f:
         json.dump(trades, f, ensure_ascii=False, indent=2)
+
+def save_baseline(snapshot):
+    ensure_data_dir()
+    payload = {
+        "saved_at": datetime.now().isoformat(),
+        "snapshot": snapshot
+    }
+    with open(BASELINE_PATH, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+def load_baseline():
+    ensure_data_dir()
+    if not os.path.exists(BASELINE_PATH):
+        return None
+    with open(BASELINE_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
