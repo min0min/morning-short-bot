@@ -2,7 +2,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
 from config import TELEGRAM_BOT_TOKEN
-from storage import load_state, save_state, load_trades
+from storage import load_state, save_state, load_trades, calc_trade_stats
 from messages import (
     main_menu_text,
     status_message,
@@ -10,6 +10,7 @@ from messages import (
     scan_result_message,
     backtest_result_message,
     weekly_backtest_result_message,
+    stats_message,
 )
 from exchanges import get_crosslisted_futures_snapshot, get_exchange_debug_text
 from strategy import create_position
@@ -86,6 +87,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💵 가상 수익 현황\n\n시작 시드 : ${state['seed_usdt']:,.2f}\n현재 잔고 : ${state['paper_balance']:,.2f}\n누적 손익 : ${pnl:,.2f}",
             reply_markup=main_keyboard()
         )
+
+    elif data == "stats":
+        stats = calc_trade_stats()
+        await query.edit_message_text(stats_message(stats), reply_markup=main_keyboard())
 
     elif data == "settings":
         s = state["settings"]

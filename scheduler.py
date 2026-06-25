@@ -5,7 +5,7 @@ from config import KST_TIMEZONE
 from storage import load_state
 from exchanges import get_bitget_price
 from scanner import scan_latest_closed_15m_oc
-from strategy import create_position, add_entry_if_needed, check_tp, check_sl_after_16
+from strategy import create_position, add_entry_if_needed, check_tp, check_sl_after_16, update_open_position_metrics
 from messages import entry_message, add_message, close_message, scan_result_message
 
 async def closed_15m_scan_job(bot, chat_id):
@@ -55,6 +55,8 @@ async def position_watch_job(bot, chat_id):
         return
 
     price = await get_bitget_price(pos["symbol"])
+
+    update_open_position_metrics(price)
 
     added = add_entry_if_needed(price)
     if added:

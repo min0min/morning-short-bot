@@ -79,6 +79,9 @@ def close_message(pos, balance):
 
 가상 잔고 : {fmt_usdt(balance)}
 
+최대 유리 : {pos.get('max_pnl_pct', 0):.2f}% @ {pos.get('max_pnl_price', '-')}
+최대 불리 : {pos.get('min_pnl_pct', 0):.2f}% @ {pos.get('min_pnl_price', '-')}
+
 상태 : PAPER MODE"""
 
 def status_message(state):
@@ -89,7 +92,10 @@ def status_message(state):
         position_text = f"""{pos['base']} SHORT
 평균가 : {pos['avg_price']:.8f}
 총 증거금 : {fmt_usdt(pos['total_margin'])}
-진입 차수 : {len(pos['entries'])}차"""
+진입 차수 : {len(pos['entries'])}차
+현재 수익률 : {pos.get('last_pnl_pct', 0):.2f}%
+최대 유리 : {pos.get('max_pnl_pct', 0):.2f}%
+최대 불리 : {pos.get('min_pnl_pct', 0):.2f}%"""
 
     return f"""📊 [내 상태]
 
@@ -197,3 +203,33 @@ def weekly_backtest_result_message(results, threshold):
 {lines}
 
 ※ 이 검증은 진입 종목 선정만 확인합니다."""
+
+
+def stats_message(stats):
+    best = stats.get("best")
+    worst = stats.get("worst")
+
+    best_text = "없음"
+    if best:
+        best_text = f"{best.get('base')} {best.get('pnl_pct'):.2f}% / ${best.get('pnl'):.2f}"
+
+    worst_text = "없음"
+    if worst:
+        worst_text = f"{worst.get('base')} {worst.get('pnl_pct'):.2f}% / ${worst.get('pnl'):.2f}"
+
+    return f"""📈 [신호 통계]
+
+청산 완료 거래 : {stats['total']}회
+
+승 : {stats['wins']}회
+패 : {stats['losses']}회
+승률 : {stats['win_rate']:.2f}%
+
+누적 손익 : ${stats['total_pnl']:.2f}
+평균 손익 : ${stats['avg_pnl']:.2f}
+
+최대 연승 : {stats['max_win_streak']}회
+최대 연패 : {stats['max_loss_streak']}회
+
+최고 거래 : {best_text}
+최악 거래 : {worst_text}"""

@@ -239,3 +239,76 @@ def get_close_candidates(threshold_pct=3.0, include_below=False, limit=None):
 # 기존 함수명 호환용: 내부 기준은 이제 close 기준으로 변경
 def get_peak_candidates(threshold_pct=3.0, include_below=False, limit=None):
     return get_close_candidates(threshold_pct, include_below, limit)
+
+
+def calc_trade_stats():
+    """
+    CLOSED 거래 기준 통계.
+    ENTRY/CLOSE 이벤트가 섞여 있으므로 CLOSE 타입만 집계한다.
+    """
+    trades = load_trades()
+    closed = [t for t in trades if t.get("type") == "CLOSE" and t.get("position")]
+
+    total = len(closed)
+    wins = 0
+    losses = 0
+    total_pnl = 0.0
+    best = None
+    worst = None
+    max_win_streak = 0
+    max_loss_streak = 0
+    cur_win = 0
+    cur_loss = 0
+
+    for t in closed:
+        p = t["position"]
+        pnl = float(p.get("realized_pnl", 0))
+        pnl_pct = float(p.get("pnl_pct", 0))
+        total_pnl += pnl
+
+        if pnl > 0:
+            wins += 1
+            cur_win += 1
+            cur_loss = 0
+        elif pnl < 0:
+            losses += 1
+            cur_loss += 1
+            cur_win = 0
+        else:
+            cur_win = 0
+            cur_loss = 0
+
+        max_win_streak = max(max_win_streak, cur_win)
+        max_loss_streak = max(max_loss_streak, cur_loss)
+
+        if best is None or pnl_pct > float(best.get("pnl_pct", -999999)):
+            best = {
+                "base": p.get("base"),
+                "pnl_pct": pnl_pct,
+                "pnl": pnl,
+                "reason": p.get("close_reason"),
+            }
+
+        if worst is None or pnl_pct < float(worst.get("pnl_pct", 999999)):
+            worst = {
+                "base": p.get("base"),
+                "pnl_pct": pnl_pct,
+                "pnl": pnl,
+                "reason": p.get("close_reason"),
+            }
+
+    win_rate = (wins / total * 100) if total else 0.0
+    avg_pnl = (total_pnl / total) if total else 0.0
+
+    return {
+        "total": total,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": win_rate,
+        "total_pnl": total_pnl,
+        "avg_pnl": avg_pnl,
+        "best": best,
+        "worst": worst,
+        "max_win_streak": max_win_streak,
+        "max_loss_streak": max_loss_streak,
+    }
