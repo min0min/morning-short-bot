@@ -2,7 +2,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import pytz
 
 from config import KST_TIMEZONE
-from storage import load_state, save_baseline, reset_window, update_window_with_snapshot, get_peak_candidates
+from storage import load_state, save_baseline, reset_window, update_window_with_snapshot, get_close_candidates
 from exchanges import get_crosslisted_futures_snapshot, get_bitget_price
 from strategy import create_position, add_entry_if_needed, check_tp, check_sl_after_16
 from messages import entry_message, add_message, close_message, scan_result_message
@@ -42,14 +42,14 @@ async def morning_scan_job(bot, chat_id):
         return
 
     threshold = state["settings"]["pump_threshold_pct"]
-    candidates, signal = get_peak_candidates(threshold, include_below=True, limit=20)
+    candidates, signal = get_close_candidates(threshold, include_below=True, limit=20)
 
     await bot.send_message(chat_id=chat_id, text=scan_result_message(candidates, threshold, signal=signal, include_below=True))
 
     if not signal:
         return
 
-    pos = create_position(signal, reason="09_00_TO_09_15_PEAK_PUMP_TOP1")
+    pos = create_position(signal, reason="09_00_TO_09_15_15M_OC_TOP1")
     await bot.send_message(chat_id=chat_id, text=entry_message(pos, signal))
 
 async def position_watch_job(bot, chat_id):

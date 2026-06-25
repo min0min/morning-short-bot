@@ -45,10 +45,10 @@ def load_state():
     ensure_data_dir()
     if not os.path.exists(STATE_PATH):
         save_state(DEFAULT_STATE.copy())
+
     with open(STATE_PATH, "r", encoding="utf-8") as f:
         state = json.load(f)
 
-    # 신규 필드 누락 방지
     changed = False
     for k, v in DEFAULT_STATE.items():
         if k not in state:
@@ -58,6 +58,7 @@ def load_state():
         if k not in state["settings"]:
             state["settings"][k] = v
             changed = True
+
     if changed:
         save_state(state)
 
@@ -115,11 +116,18 @@ def load_window():
         return json.load(f)
 
 def reset_window(snapshot):
+    """
+    09:00 기준가 저장.
+    실전 전략은 15분봉 O→C 기준:
+    baseline_price = 09:00 가격
+    last_price = 09:15 가격
+    """
     ensure_data_dir()
     now = datetime.now().isoformat()
     window = {
         "started_at": now,
         "updated_at": now,
+        "mode": "15M_OPEN_TO_CLOSE",
         "symbols": {},
     }
 
@@ -129,7 +137,7 @@ def reset_window(snapshot):
             "base": base,
             "symbol": item["symbol"],
             "baseline_price": price,
-            "peak_price": price,
+            "peak_price": price,  # 참고용
             "last_price": price,
             "peak_time": now,
             "updated_at": now,
@@ -139,6 +147,11 @@ def reset_window(snapshot):
     return window
 
 def update_window_with_snapshot(snapshot):
+    """
+    09:00~09:15 동안 현재가를 계속 업데이트.
+    최종 판정은 최고가가 아니라 09:15 마지막 가격(last_price) 기준.
+    peak_price는 참고용으로만 저장.
+    """
     window = load_window()
     if not window:
         window = reset_window(snapshot)
@@ -148,6 +161,7 @@ def update_window_with_snapshot(snapshot):
 
     for base, item in snapshot.items():
         price = float(item["price"])
+
         if base not in symbols:
             symbols[base] = {
                 "base": base,
@@ -172,7 +186,11 @@ def update_window_with_snapshot(snapshot):
     save_window(window)
     return window
 
-def get_peak_candidates(threshold_pct=3.0, include_below=False, limit=None):
+def get_close_candidates(threshold_pct=3.0, include_below=False, limit=None):
+    """
+    알림봇과 맞춘 15분봉 O→C 기준 후보 산출.
+    change_pct = (last_price - baseline_price) / baseline_price * 100
+    """
     window = load_window()
     if not window:
         return [], None
@@ -182,26 +200,30 @@ def get_peak_candidates(threshold_pct=3.0, include_below=False, limit=None):
 
     for base, row in window.get("symbols", {}).items():
         baseline = float(row.get("baseline_price", 0))
-        peak = float(row.get("peak_price", 0))
         last = float(row.get("last_price", 0))
+        peak = float(row.get("peak_price", last))
+
         if baseline <= 0:
             continue
 
+        close_pct = ((last - baseline) / baseline) * 100
         peak_pct = ((peak - baseline) / baseline) * 100
-        last_pct = ((last - baseline) / baseline) * 100
 
         candidate = {
             "base": base,
             "symbol": row.get("symbol"),
-            "change_pct": peak_pct,
-            "last_change_pct": last_pct,
+            "change_pct": close_pct,          # 최종 선정 기준
+            "last_change_pct": close_pct,     # 09:15 O→C
+            "peak_change_pct": peak_pct,      # 참고용
             "price": last,
             "baseline_price": baseline,
             "peak_price": peak,
             "peak_time": row.get("peak_time"),
         }
+
         all_rows.append(candidate)
-        if peak_pct >= threshold_pct:
+
+        if close_pct >= threshold_pct:
             passed.append(candidate)
 
     all_rows.sort(key=lambda x: x["change_pct"], reverse=True)
@@ -213,3 +235,7 @@ def get_peak_candidates(threshold_pct=3.0, include_below=False, limit=None):
 
     signal = passed[0] if passed else None
     return result, signal
+
+# 기존 함수명 호환용: 내부 기준은 이제 close 기준으로 변경
+def get_peak_candidates(threshold_pct=3.0, include_below=False, limit=None):
+    return get_close_candidates(threshold_pct, include_below, limit)

@@ -7,13 +7,13 @@ def main_menu_text():
 def entry_message(pos, signal):
     e = pos["entries"][0]
 
-    peak_info = ""
+    candle_info = ""
     if signal.get("baseline_price") is not None:
-        peak_info = (
-            f"\n09:00 기준가 : {signal.get('baseline_price')}"
-            f"\n15분 최고가 : {signal.get('peak_price')}"
-            f"\n현재가 : {signal.get('price')}"
-            f"\n현재 상승률 : +{signal.get('last_change_pct', 0):.2f}%"
+        candle_info = (
+            f"\n15분봉 O : {signal.get('baseline_price')}"
+            f"\n15분봉 C : {signal.get('price')}"
+            f"\n참고 H : {signal.get('peak_price')}"
+            f"\nO→C 상승률 : +{signal.get('change_pct', 0):.2f}%"
         )
 
     return f"""🚨 [PAPER ENTRY]
@@ -25,8 +25,8 @@ def entry_message(pos, signal):
 ✅ 업비트 상장
 ✅ 빗썸 상장
 ✅ 비트겟 선물 가능
-✅ 15분 최고 상승률 1위 (+{signal['change_pct']:.2f}%)
-{peak_info}
+✅ 15분봉 O→C 상승률 1위 (+{signal['change_pct']:.2f}%)
+{candle_info}
 
 ------------------
 
@@ -100,14 +100,10 @@ def status_message(state):
 {position_text}"""
 
 def scan_result_message(candidates, threshold, signal=None, include_below=True):
-    """
-    candidates: TOP 리스트. include_below=True면 +3% 미만도 포함된 전체 TOP.
-    signal: 실제 진입 후보. +threshold 이상 중 1등. 없으면 None.
-    """
     if not candidates:
-        return f"""📭 [09:15 PEAK SCAN]
+        return f"""📭 [09:15 O→C SCAN]
 
-09:00~09:15 최고 상승률 기준
+09:00~09:15 15분봉 O→C 기준
 계산된 후보가 없습니다.
 
 진입 없음"""
@@ -116,40 +112,37 @@ def scan_result_message(candidates, threshold, signal=None, include_below=True):
     for i, c in enumerate(candidates[:10], 1):
         top_lines += (
             f"{i}. {c['base']} "
-            f"최고 +{c['change_pct']:.2f}% "
-            f"/ 현재 +{c.get('last_change_pct', 0):.2f}%\n"
+            f"O→C +{c['change_pct']:.2f}% "
+            f"/ H참고 +{c.get('peak_change_pct', 0):.2f}%\n"
         )
 
     if signal:
-        return f"""📈 [09:15 PEAK SCAN 결과]
+        return f"""📈 [09:15 O→C SCAN 결과]
 
-09:00~09:15 최고 상승률 TOP10
+09:00~09:15 15분봉 O→C 상승률 TOP10
 
 {top_lines}
 
 🎯 진입 조건 충족
-기준 : +{threshold}% 이상
+기준 : O→C +{threshold}% 이상
 
 🏆 선정 종목
-{signal['base']} / 최고 +{signal['change_pct']:.2f}%
+{signal['base']} / O→C +{signal['change_pct']:.2f}%
 
 이 종목만 PAPER 숏 진입합니다."""
 
-    return f"""📭 [09:15 PEAK SCAN 결과]
+    return f"""📭 [09:15 O→C SCAN 결과]
 
-09:00~09:15 최고 상승률 TOP10
+09:00~09:15 15분봉 O→C 상승률 TOP10
 
 {top_lines}
 
 ⚠️ 진입 조건 미충족
-기준 : +{threshold}% 이상
-
-+{threshold}% 이상 급등 종목 없음
+기준 : O→C +{threshold}% 이상
 
 진입 없음"""
 
 def today_pump_test_message(candidates, threshold):
-    # 호환용. v1.8에서는 24시간 상승률 테스트를 사용하지 않음.
     return scan_result_message(candidates, threshold)
 
 def backtest_result_message(date_text, candidates, threshold, total_symbols, errors=0):
@@ -157,7 +150,7 @@ def backtest_result_message(date_text, candidates, threshold, total_symbols, err
         return f"""🧪 [날짜 백테스트 결과]
 
 날짜 : {date_text}
-구간 : 09:00~09:15 KST (15분봉 기준)
+구간 : 09:00~09:15 KST (15분봉 O→C 기준)
 추적 종목 : {total_symbols}개
 캔들 오류/누락 : {errors}개
 
@@ -167,27 +160,66 @@ def backtest_result_message(date_text, candidates, threshold, total_symbols, err
     for i, c in enumerate(candidates[:20], 1):
         top_lines += (
             f"{i}. {c['base']} "
-            f"최고 +{c['change_pct']:.2f}% "
-            f"/ 09:15 +{c.get('last_change_pct', 0):.2f}%\n"
+            f"O→C +{c['change_pct']:.2f}% "
+            f"/ H참고 +{c.get('peak_change_pct', 0):.2f}%\n"
         )
 
     winner = candidates[0]
     if winner["change_pct"] >= threshold:
-        enter_text = f"✅ 진입 조건 충족\n🏆 선정 종목 : {winner['base']} +{winner['change_pct']:.2f}%"
+        enter_text = f"✅ 진입 조건 충족\n🏆 선정 종목 : {winner['base']} O→C +{winner['change_pct']:.2f}%"
     else:
-        enter_text = f"⚠️ 진입 조건 미충족\n최고 종목 : {winner['base']} +{winner['change_pct']:.2f}%"
+        enter_text = f"⚠️ 진입 조건 미충족\n최고 종목 : {winner['base']} O→C +{winner['change_pct']:.2f}%"
 
     return f"""🧪 [날짜 백테스트 결과]
 
 날짜 : {date_text}
-구간 : 09:00~09:15 KST (15분봉 기준)
+구간 : 09:00~09:15 KST (15분봉 O→C 기준)
 추적 종목 : {total_symbols}개
 캔들 오류/누락 : {errors}개
 
-09:00~09:15 최고 상승률 TOP20
+15분봉 O→C 상승률 TOP20
 
 {top_lines}
 
 {enter_text}
 
 ※ 백테스트는 실제 PAPER 포지션을 만들지 않습니다."""
+
+def weekly_backtest_result_message(results, threshold):
+    lines = ""
+    total_days = 0
+    signal_days = 0
+
+    for r in results:
+        total_days += 1
+        date_text = r["date"]
+        candidates = r.get("candidates", [])
+        errors = r.get("errors", 0)
+        total_symbols = r.get("total_symbols", 0)
+
+        if not candidates:
+            lines += f"{date_text} : 후보 없음 / 추적 {total_symbols} / 오류 {errors}\n"
+            continue
+
+        winner = candidates[0]
+        passed = winner["change_pct"] >= threshold
+        if passed:
+            signal_days += 1
+            mark = "✅"
+        else:
+            mark = "⚠️"
+
+        lines += f"{mark} {date_text} : {winner['base']} O→C +{winner['change_pct']:.2f}% / H +{winner.get('peak_change_pct', 0):.2f}%\n"
+
+    return f"""🧪 [최근 7일 자동 검증]
+
+기준 : 09:00~09:15 KST 15분봉 O→C
+진입 기준 : +{threshold}% 이상
+
+검증일 : {total_days}일
+진입 조건 충족일 : {signal_days}일
+
+{lines}
+
+※ 이 검증은 진입 종목 선정만 확인합니다.
+※ TP/SL 결과 검증은 다음 단계에서 추가 가능합니다."""

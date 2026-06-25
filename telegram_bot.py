@@ -9,7 +9,7 @@ from storage import (
     save_baseline,
     reset_window,
     update_window_with_snapshot,
-    get_peak_candidates,
+    get_close_candidates,
 )
 from messages import (
     main_menu_text,
@@ -18,10 +18,11 @@ from messages import (
     scan_result_message,
     today_pump_test_message,
     backtest_result_message,
+    weekly_backtest_result_message,
 )
 from exchanges import get_crosslisted_futures_snapshot, get_exchange_debug_text
 from strategy import create_position
-from backtest import run_date_backtest
+from backtest import run_date_backtest, run_recent_days_backtest
 
 WAITING_SEED = "waiting_seed"
 WAITING_BACKTEST_DATE = "waiting_backtest_date"
@@ -39,6 +40,7 @@ def main_keyboard():
         [InlineKeyboardButton("🧪 피크 스캔 테스트", callback_data="test_peak_scan")],
         [InlineKeyboardButton("🧪 15분 전략 테스트", callback_data="today_pump_test")],
         [InlineKeyboardButton("🧪 날짜 백테스트", callback_data="date_backtest")],
+        [InlineKeyboardButton("🧪 최근 7일 자동 검증", callback_data="recent7_backtest")],
         [InlineKeyboardButton("🔍 거래소 디버그", callback_data="debug_exchange")],
         [InlineKeyboardButton("📢 안내사항", callback_data="notice")],
     ]
@@ -105,7 +107,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "criteria":
         await query.edit_message_text(
-            "🎯 종목 선정 기준\n\n09:00 KST 기준가 저장\n09:00~09:15 30초마다 최고가 추적\n업비트 + 빗썸 교차상장\n비트겟 USDT 선물 가능\n15분 최고 상승률 +3% 이상\n상승률 1등 딱 1개만 거래",
+            "🎯 종목 선정 기준\n\n09:00 KST 기준가 저장\n09:00 기준가 저장 → 09:15 가격으로 O→C 계산\n업비트 + 빗썸 교차상장\n비트겟 USDT 선물 가능\n15분봉 O→C +3% 이상\n상승률 1등 딱 1개만 거래",
             reply_markup=main_keyboard()
         )
 
@@ -135,11 +137,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "test_peak_scan":
         try:
             threshold = state["settings"]["pump_threshold_pct"]
-            candidates, signal = get_peak_candidates(threshold, include_below=True, limit=20)
+            candidates, signal = get_close_candidates(threshold, include_below=True, limit=20)
             msg = scan_result_message(candidates, threshold, signal=signal, include_below=True)
 
             if signal and not state.get("open_position"):
-                pos = create_position(signal, reason="MANUAL_PEAK_SCAN_TEST")
+                pos = create_position(signal, reason="MANUAL_O→C_SCAN_TEST")
                 msg += "\n\n" + entry_message(pos, signal)
             elif signal and state.get("open_position"):
                 msg += "\n\n⚠️ 이미 오픈 포지션이 있어서 중복 진입은 막았습니다."
@@ -156,15 +158,15 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # 이 버튼도 24시간 변동률을 쓰지 않는다.
             # 반드시 기준가 저장 테스트 → 최고가 갱신 테스트 이후의
             # window_0900_0915 데이터만 사용한다.
-            candidates, signal = get_peak_candidates(threshold, include_below=True, limit=20)
+            candidates, signal = get_close_candidates(threshold, include_below=True, limit=20)
 
             msg = "🧪 [15분 전략 테스트]\n\n"
             msg += "이 테스트는 24시간 상승률이 아니라,\n"
-            msg += "마지막으로 저장한 기준가 이후의 최고 상승률만 계산합니다.\n\n"
+            msg += "마지막으로 저장한 기준가 이후의 15분봉 O→C 상승률만 계산합니다.\n\n"
             msg += scan_result_message(candidates, threshold, signal=signal, include_below=True)
 
             if signal and not state.get("open_position"):
-                pos = create_position(signal, reason="MANUAL_EXACT_15MIN_STRATEGY_TEST")
+                pos = create_position(signal, reason="MANUAL_15M_OC_STRATEGY_TEST")
                 msg += "\n\n" + entry_message(pos, signal)
             elif signal and state.get("open_position"):
                 msg += "\n\n⚠️ 이미 오픈 포지션이 있어서 중복 진입은 막았습니다."
@@ -189,16 +191,34 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "date_backtest":
         context.user_data[WAITING_BACKTEST_DATE] = True
         await query.edit_message_text(
-            "🧪 날짜 백테스트\n\n조회할 날짜를 입력하세요.\n\n예) 2026-06-25\n\n해당 날짜의 09:00~09:15 KST 구간을 과거 15분봉 기준으로 재현합니다.",
+            "🧪 날짜 백테스트\n\n조회할 날짜를 입력하세요.\n\n예) 2026-06-25\n\n해당 날짜의 09:00~09:15 KST 구간을 과거 15분봉 O→C 기준으로 재현합니다.",
             reply_markup=main_keyboard()
         )
+
+    elif data == "recent7_backtest":
+        try:
+            threshold = state["settings"]["pump_threshold_pct"]
+            await query.edit_message_text(
+                "🧪 최근 7일 자동 검증 실행중...\n\n09:00~09:15 KST 15분봉 O→C 기준으로 계산합니다.\n종목 수가 많아서 1~3분 정도 걸릴 수 있습니다.",
+                reply_markup=main_keyboard()
+            )
+
+            results = await run_recent_days_backtest(7, threshold)
+            msg = weekly_backtest_result_message(results, threshold)
+            await query.message.reply_text(msg, reply_markup=main_keyboard())
+
+        except Exception as e:
+            await query.message.reply_text(
+                f"❌ 최근 7일 자동 검증 실패\n\n{type(e).__name__}: {e}",
+                reply_markup=main_keyboard()
+            )
 
     elif data == "api":
         await query.edit_message_text("🔑 API 키 등록\n\n현재 v1.8는 PAPER MODE라 주문 API가 필요 없습니다.\n가격 조회는 공개 API로 진행합니다.", reply_markup=main_keyboard())
 
     elif data == "notice":
         await query.edit_message_text(
-            "📢 안내사항\n\n이 봇은 실주문을 넣지 않는 모의투자 봇입니다.\n실제 돈이 움직이지 않습니다.\n\nv1.8: 09:00~09:15 동안 30초마다 최고가를 추적하고, 최고 상승률 1등만 선정합니다.",
+            "📢 안내사항\n\n이 봇은 실주문을 넣지 않는 모의투자 봇입니다.\n실제 돈이 움직이지 않습니다.\n\nv1.8: 09:00~09:15 동안 30초마다 최고가를 추적하고, 15분봉 O→C 상승률 1등만 선정합니다.",
             reply_markup=main_keyboard()
         )
 
