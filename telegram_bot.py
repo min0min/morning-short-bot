@@ -20,7 +20,6 @@ from messages import (
 )
 from exchanges import get_crosslisted_futures_snapshot, get_exchange_debug_text
 from strategy import create_position
-from today_scan import scan_today_pump
 
 WAITING_SEED = "waiting_seed"
 
@@ -35,7 +34,7 @@ def main_keyboard():
         [InlineKeyboardButton("🧪 기준가 저장 테스트", callback_data="test_baseline")],
         [InlineKeyboardButton("🧪 최고가 갱신 테스트", callback_data="test_window")],
         [InlineKeyboardButton("🧪 피크 스캔 테스트", callback_data="test_peak_scan")],
-        [InlineKeyboardButton("🧪 오늘 급등 테스트", callback_data="today_pump_test")],
+        [InlineKeyboardButton("🧪 15분 전략 테스트", callback_data="today_pump_test")],
         [InlineKeyboardButton("🔍 거래소 디버그", callback_data="debug_exchange")],
         [InlineKeyboardButton("📢 안내사항", callback_data="notice")],
     ]
@@ -148,18 +147,27 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "today_pump_test":
         try:
             threshold = state["settings"]["pump_threshold_pct"]
-            candidates, signal = await scan_today_pump(threshold)
-            msg = today_pump_test_message(candidates, threshold)
+
+            # 중요:
+            # 이 버튼도 24시간 변동률을 쓰지 않는다.
+            # 반드시 기준가 저장 테스트 → 최고가 갱신 테스트 이후의
+            # window_0900_0915 데이터만 사용한다.
+            candidates, signal = get_peak_candidates(threshold, include_below=False)
+
+            msg = "🧪 [15분 전략 테스트]\n\n"
+            msg += "이 테스트는 24시간 상승률이 아니라,\n"
+            msg += "마지막으로 저장한 기준가 이후의 최고 상승률만 계산합니다.\n\n"
+            msg += scan_result_message(candidates, threshold)
 
             if signal and not state.get("open_position"):
-                pos = create_position(signal, reason="MANUAL_TODAY_PUMP_TEST")
+                pos = create_position(signal, reason="MANUAL_EXACT_15MIN_STRATEGY_TEST")
                 msg += "\n\n" + entry_message(pos, signal)
             elif signal and state.get("open_position"):
                 msg += "\n\n⚠️ 이미 오픈 포지션이 있어서 중복 진입은 막았습니다."
 
             await query.edit_message_text(msg, reply_markup=main_keyboard())
         except Exception as e:
-            await query.edit_message_text(f"❌ 오늘 급등 테스트 실패\n\n{type(e).__name__}: {e}", reply_markup=main_keyboard())
+            await query.edit_message_text(f"❌ 15분 전략 테스트 실패\n\n{type(e).__name__}: {e}", reply_markup=main_keyboard())
 
     elif data == "debug_exchange":
         try:
@@ -175,11 +183,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     elif data == "api":
-        await query.edit_message_text("🔑 API 키 등록\n\n현재 v1.5는 PAPER MODE라 주문 API가 필요 없습니다.\n가격 조회는 공개 API로 진행합니다.", reply_markup=main_keyboard())
+        await query.edit_message_text("🔑 API 키 등록\n\n현재 v1.6는 PAPER MODE라 주문 API가 필요 없습니다.\n가격 조회는 공개 API로 진행합니다.", reply_markup=main_keyboard())
 
     elif data == "notice":
         await query.edit_message_text(
-            "📢 안내사항\n\n이 봇은 실주문을 넣지 않는 모의투자 봇입니다.\n실제 돈이 움직이지 않습니다.\n\nv1.5: 09:00~09:15 동안 30초마다 최고가를 추적하고, 최고 상승률 1등만 선정합니다.",
+            "📢 안내사항\n\n이 봇은 실주문을 넣지 않는 모의투자 봇입니다.\n실제 돈이 움직이지 않습니다.\n\nv1.6: 09:00~09:15 동안 30초마다 최고가를 추적하고, 최고 상승률 1등만 선정합니다.",
             reply_markup=main_keyboard()
         )
 
