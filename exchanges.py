@@ -214,3 +214,55 @@ async def get_bitget_1m_candles(symbol, start_ms, end_ms):
     if last_error:
         raise last_error
     return []
+
+
+async def get_bitget_15m_candles(symbol, start_ms, end_ms):
+    """
+    Bitget USDT-FUTURES 15분봉 조회.
+    날짜 백테스트 전용.
+    반환: [{ts, open, high, low, close}]
+    """
+    endpoints = [
+        "https://api.bitget.com/api/v2/mix/market/candles",
+        "https://api.bitget.com/api/v2/mix/market/history-candles",
+    ]
+
+    last_error = None
+
+    for url in endpoints:
+        try:
+            data = await fetch_json(url, {
+                "symbol": symbol,
+                "productType": "USDT-FUTURES",
+                "granularity": "15m",
+                "startTime": str(int(start_ms)),
+                "endTime": str(int(end_ms)),
+                "limit": "10"
+            })
+
+            rows = data.get("data", [])
+            result = []
+
+            for row in rows:
+                try:
+                    result.append({
+                        "ts": int(row[0]),
+                        "open": float(row[1]),
+                        "high": float(row[2]),
+                        "low": float(row[3]),
+                        "close": float(row[4]),
+                    })
+                except Exception:
+                    continue
+
+            result.sort(key=lambda x: x["ts"])
+            if result:
+                return result
+
+        except Exception as e:
+            last_error = e
+            continue
+
+    if last_error:
+        raise last_error
+    return []

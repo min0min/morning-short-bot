@@ -189,7 +189,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "date_backtest":
         context.user_data[WAITING_BACKTEST_DATE] = True
         await query.edit_message_text(
-            "🧪 날짜 백테스트\n\n조회할 날짜를 입력하세요.\n\n예) 2026-06-25\n\n해당 날짜의 09:00~09:15 KST 구간을 과거 1분봉으로 재현합니다.",
+            "🧪 날짜 백테스트\n\n조회할 날짜를 입력하세요.\n\n예) 2026-06-25\n\n해당 날짜의 09:00~09:15 KST 구간을 과거 15분봉 기준으로 재현합니다.",
             reply_markup=main_keyboard()
         )
 
@@ -215,7 +215,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             context.user_data[WAITING_BACKTEST_DATE] = False
             wait_msg = await update.message.reply_text(
-                f"🧪 날짜 백테스트 실행중...\n\n날짜 : {date_text}\n구간 : 09:00~09:15 KST\n\n종목 수가 많아서 10~60초 정도 걸릴 수 있습니다."
+                f"🧪 날짜 백테스트 실행중...\n\n날짜 : {date_text}\n구간 : 09:00~09:15 KST (15분봉 기준)\n\n종목 수가 많아서 10~60초 정도 걸릴 수 있습니다."
             )
 
             state = load_state()

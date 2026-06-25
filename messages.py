@@ -9,11 +9,12 @@ def entry_message(pos, signal):
 
     peak_info = ""
     if signal.get("baseline_price") is not None:
-        peak_info = f"""
-09:00 기준가 : {signal.get('baseline_price')}
-15분 최고가 : {signal.get('peak_price')}
-현재가 : {signal.get('price')}
-현재 상승률 : +{signal.get('last_change_pct', 0):.2f}%"""
+        peak_info = (
+            f"\n09:00 기준가 : {signal.get('baseline_price')}"
+            f"\n15분 최고가 : {signal.get('peak_price')}"
+            f"\n현재가 : {signal.get('price')}"
+            f"\n현재 상승률 : +{signal.get('last_change_pct', 0):.2f}%"
+        )
 
     return f"""🚨 [PAPER ENTRY]
 
@@ -116,8 +117,7 @@ def scan_result_message(candidates, threshold, signal=None, include_below=True):
         top_lines += (
             f"{i}. {c['base']} "
             f"최고 +{c['change_pct']:.2f}% "
-            f"/ 현재 +{c.get('last_change_pct', 0):.2f}%
-"
+            f"/ 현재 +{c.get('last_change_pct', 0):.2f}%\n"
         )
 
     if signal:
@@ -148,39 +148,16 @@ def scan_result_message(candidates, threshold, signal=None, include_below=True):
 
 진입 없음"""
 
-
 def today_pump_test_message(candidates, threshold):
-    if not candidates:
-        return f"""📭 [오늘 급등 테스트]
-
-비트겟 선물 현재 상승률 기준
-업비트+빗썸 교차상장 종목 중
-+{threshold}% 이상 급등 종목 없음"""
-
-    top_lines = ""
-    for i, c in enumerate(candidates[:20], 1):
-        top_lines += f"{i}. {c['base']} +{c['change_pct']:.2f}% / 가격 {c['price']}\n"
-
-    winner = candidates[0]
-    return f"""🧪 [오늘 급등 테스트]
-
-현재 비트겟 선물 상승률 기준
-업비트+빗썸 교차상장 후보 TOP20
-
-{top_lines}
-
-🏆 선정 종목
-{winner['base']} +{winner['change_pct']:.2f}%
-
-PAPER 숏 진입 대상으로 선정합니다."""
-
+    # 호환용. v1.8에서는 24시간 상승률 테스트를 사용하지 않음.
+    return scan_result_message(candidates, threshold)
 
 def backtest_result_message(date_text, candidates, threshold, total_symbols, errors=0):
     if not candidates:
         return f"""🧪 [날짜 백테스트 결과]
 
 날짜 : {date_text}
-구간 : 09:00~09:15 KST
+구간 : 09:00~09:15 KST (15분봉 기준)
 추적 종목 : {total_symbols}개
 캔들 오류/누락 : {errors}개
 
@@ -195,16 +172,15 @@ def backtest_result_message(date_text, candidates, threshold, total_symbols, err
         )
 
     winner = candidates[0]
-    enter_text = (
-        f"✅ 진입 조건 충족\n🏆 선정 종목 : {winner['base']} +{winner['change_pct']:.2f}%"
-        if winner["change_pct"] >= threshold
-        else f"⚠️ 진입 조건 미충족\n최고 종목 : {winner['base']} +{winner['change_pct']:.2f}%"
-    )
+    if winner["change_pct"] >= threshold:
+        enter_text = f"✅ 진입 조건 충족\n🏆 선정 종목 : {winner['base']} +{winner['change_pct']:.2f}%"
+    else:
+        enter_text = f"⚠️ 진입 조건 미충족\n최고 종목 : {winner['base']} +{winner['change_pct']:.2f}%"
 
     return f"""🧪 [날짜 백테스트 결과]
 
 날짜 : {date_text}
-구간 : 09:00~09:15 KST
+구간 : 09:00~09:15 KST (15분봉 기준)
 추적 종목 : {total_symbols}개
 캔들 오류/누락 : {errors}개
 

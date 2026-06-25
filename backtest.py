@@ -2,28 +2,30 @@ import asyncio
 from datetime import datetime
 import pytz
 
-from exchanges import get_crosslisted_futures_snapshot, get_bitget_1m_candles
+from exchanges import get_crosslisted_futures_snapshot, get_bitget_15m_candles
 
 KST = pytz.timezone("Asia/Seoul")
 
 def kst_window_ms(date_text):
     """
     YYYY-MM-DD 기준 KST 09:00~09:15 ms 반환.
+    날짜 백테스트는 15분봉 기준으로만 계산한다.
     """
     start_dt = KST.localize(datetime.strptime(date_text + " 09:00:00", "%Y-%m-%d %H:%M:%S"))
     end_dt = KST.localize(datetime.strptime(date_text + " 09:15:00", "%Y-%m-%d %H:%M:%S"))
-
-    start_ms = int(start_dt.timestamp() * 1000)
-    end_ms = int(end_dt.timestamp() * 1000)
-    return start_ms, end_ms
+    return int(start_dt.timestamp() * 1000), int(end_dt.timestamp() * 1000)
 
 async def run_date_backtest(date_text, threshold_pct=3.0):
     """
-    지정 날짜의 09:00~09:15 KST 구간을 과거 1분봉으로 재현.
-    - 교차상장+비트겟 선물 가능 종목 전체 조회
-    - 각 종목 1분봉 조회
-    - 09:00 open 기준, 09:00~09:15 high 최고 상승률 계산
-    - TOP 후보 반환
+    지정 날짜의 09:00~09:15 KST 구간을 과거 15분봉으로 재현.
+
+    기준:
+    - 09:00 15분봉 open = 기준가
+    - 09:00~09:15 15분봉 high = 최고가
+    - 09:00~09:15 15분봉 close = 09:15 가격
+    - 최고 상승률 = (high - open) / open * 100
+
+    백테스트는 실제 PAPER 포지션을 만들지 않는다.
     """
     start_ms, end_ms = kst_window_ms(date_text)
 
@@ -38,14 +40,17 @@ async def run_date_backtest(date_text, threshold_pct=3.0):
         nonlocal errors
         async with sem:
             try:
-                candles = await get_bitget_1m_candles(item["symbol"], start_ms, end_ms)
+                candles = await get_bitget_15m_candles(item["symbol"], start_ms, end_ms)
                 if not candles:
                     errors += 1
                     return None
 
-                baseline = float(candles[0]["open"])
-                peak = max(float(c["high"]) for c in candles)
-                last = float(candles[-1]["close"])
+                # 09:00~09:15에 해당하는 첫 15분봉만 사용
+                candle = candles[0]
+
+                baseline = float(candle["open"])
+                peak = float(candle["high"])
+                last = float(candle["close"])
 
                 if baseline <= 0:
                     errors += 1
@@ -62,7 +67,7 @@ async def run_date_backtest(date_text, threshold_pct=3.0):
                     "price": last,
                     "baseline_price": baseline,
                     "peak_price": peak,
-                    "peak_time": None,
+                    "peak_time": "09:00~09:15 15m candle",
                 }
 
             except Exception:
@@ -70,6 +75,7 @@ async def run_date_backtest(date_text, threshold_pct=3.0):
                 return None
 
     rows = await asyncio.gather(*(one(item) for item in items))
+
     for row in rows:
         if row:
             candidates.append(row)
