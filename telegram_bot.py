@@ -4,7 +4,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 from config import TELEGRAM_BOT_TOKEN
 from storage import load_state, save_state, load_trades, save_baseline, load_baseline
 from messages import main_menu_text, status_message, entry_message
-from exchanges import get_crosslisted_futures_snapshot, scan_top_15min_pump_crosslisted
+from exchanges import get_crosslisted_futures_snapshot, scan_top_15min_pump_crosslisted, get_exchange_debug_text
 from strategy import create_position
 
 WAITING_SEED = "waiting_seed"
@@ -19,6 +19,7 @@ def main_keyboard():
         [InlineKeyboardButton("🎯 종목 선정 기준", callback_data="criteria")],
         [InlineKeyboardButton("🧪 기준가 저장 테스트", callback_data="test_baseline")],
         [InlineKeyboardButton("🧪 15분 스캔 테스트", callback_data="test_scan")],
+        [InlineKeyboardButton("🔍 거래소 디버그", callback_data="debug_exchange")],
         [InlineKeyboardButton("📢 안내사항", callback_data="notice")]
     ]
     return InlineKeyboardMarkup(rows)
@@ -94,7 +95,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             snapshot = await get_crosslisted_futures_snapshot()
             save_baseline(snapshot)
             await query.edit_message_text(
-                f"🧪 [기준가 저장 테스트 완료]\n\n교차상장 + 비트겟 선물 가능 종목 {len(snapshot)}개 기준가를 지금 저장했습니다.\n\n1~15분 뒤에\n🧪 15분 스캔 테스트\n를 눌러서 급등 계산이 되는지 확인하세요.",
+                f"🧪 [기준가 저장 테스트 완료]\n\n교차상장 + 비트겟 선물 가능 종목 {len(snapshot)}개 기준가를 지금 저장했습니다.\n\n{get_exchange_debug_text()}\n\n1~15분 뒤에\n🧪 15분 스캔 테스트\n를 눌러서 급등 계산이 되는지 확인하세요.",
                 reply_markup=main_keyboard()
             )
         except Exception as e:
@@ -133,6 +134,19 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         except Exception as e:
             await query.edit_message_text(f"❌ 스캔 테스트 실패\n\n{type(e).__name__}: {e}", reply_markup=main_keyboard())
+
+    elif data == "debug_exchange":
+        try:
+            snapshot = await get_crosslisted_futures_snapshot()
+            await query.edit_message_text(
+                f"🔍 [거래소 디버그 실행 완료]\n\n스냅샷 종목 수: {len(snapshot)}개\n\n{get_exchange_debug_text()}",
+                reply_markup=main_keyboard()
+            )
+        except Exception as e:
+            await query.edit_message_text(
+                f"❌ 거래소 디버그 실패\n\n{type(e).__name__}: {e}\n\n{get_exchange_debug_text()}",
+                reply_markup=main_keyboard()
+            )
 
     elif data == "notice":
         await query.edit_message_text("📢 안내사항\n\n이 봇은 실주문을 넣지 않는 모의투자 봇입니다.\n실제 돈이 움직이지 않습니다.\n\nv1.2부터 수동 테스트 버튼이 추가되었습니다.", reply_markup=main_keyboard())
