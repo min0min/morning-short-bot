@@ -6,9 +6,14 @@ def main_menu_text():
 
 def entry_message(pos, signal):
     e = pos["entries"][0]
+
     peak_info = ""
-    if signal.get("peak_price") is not None:
-        peak_info = f"\n09:00 기준가 : {signal.get('baseline_price')}\n15분 최고가 : {signal.get('peak_price')}\n현재가 : {signal.get('price')}\n"
+    if signal.get("baseline_price") is not None:
+        peak_info = f"""
+09:00 기준가 : {signal.get('baseline_price')}
+15분 최고가 : {signal.get('peak_price')}
+현재가 : {signal.get('price')}
+현재 상승률 : +{signal.get('last_change_pct', 0):.2f}%"""
 
     return f"""🚨 [PAPER ENTRY]
 
@@ -21,6 +26,7 @@ def entry_message(pos, signal):
 ✅ 비트겟 선물 가능
 ✅ 15분 최고 상승률 1위 (+{signal['change_pct']:.2f}%)
 {peak_info}
+
 ------------------
 
 가상 시드 : {fmt_usdt(pos['total_margin'] / 0.02)}
@@ -92,7 +98,7 @@ def status_message(state):
 오픈 포지션 :
 {position_text}"""
 
-def scan_result_message(candidates, threshold):
+def scan_result_message(candidates, threshold, include_below=False):
     if not candidates:
         return f"""📭 [09:15 PEAK SCAN]
 
@@ -110,10 +116,12 @@ def scan_result_message(candidates, threshold):
         )
 
     winner = candidates[0]
+    filter_text = "전체 TOP20" if include_below else f"+{threshold}% 이상 후보"
+
     return f"""📈 [09:15 PEAK SCAN 결과]
 
 09:00~09:15 동안
-최고 상승률 기준 TOP 후보
+최고 상승률 기준 {filter_text}
 
 {top_lines}
 
@@ -121,3 +129,28 @@ def scan_result_message(candidates, threshold):
 {winner['base']} / 최고 +{winner['change_pct']:.2f}%
 
 이 종목만 PAPER 숏 진입합니다."""
+
+def today_pump_test_message(candidates, threshold):
+    if not candidates:
+        return f"""📭 [오늘 급등 테스트]
+
+비트겟 선물 현재 상승률 기준
+업비트+빗썸 교차상장 종목 중
++{threshold}% 이상 급등 종목 없음"""
+
+    top_lines = ""
+    for i, c in enumerate(candidates[:20], 1):
+        top_lines += f"{i}. {c['base']} +{c['change_pct']:.2f}% / 가격 {c['price']}\n"
+
+    winner = candidates[0]
+    return f"""🧪 [오늘 급등 테스트]
+
+현재 비트겟 선물 상승률 기준
+업비트+빗썸 교차상장 후보 TOP20
+
+{top_lines}
+
+🏆 선정 종목
+{winner['base']} +{winner['change_pct']:.2f}%
+
+PAPER 숏 진입 대상으로 선정합니다."""

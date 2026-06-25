@@ -36,24 +36,27 @@ async def morning_scan_job(bot, chat_id):
     state = load_state()
     if not state.get("running"):
         return
+
     if state.get("open_position"):
+        print("[JOB] 09:15 scan skipped: open position exists")
         return
 
     threshold = state["settings"]["pump_threshold_pct"]
-    candidates, signal = get_peak_candidates(threshold)
+    candidates, signal = get_peak_candidates(threshold, include_below=False)
 
     await bot.send_message(chat_id=chat_id, text=scan_result_message(candidates, threshold))
 
     if not signal:
         return
 
-    pos = create_position(signal)
+    pos = create_position(signal, reason="09_00_TO_09_15_PEAK_PUMP_TOP1")
     await bot.send_message(chat_id=chat_id, text=entry_message(pos, signal))
 
 async def position_watch_job(bot, chat_id):
     state = load_state()
     if not state.get("running"):
         return
+
     pos = state.get("open_position")
     if not pos:
         return
@@ -74,6 +77,7 @@ async def sl_check_job(bot, chat_id):
     state = load_state()
     if not state.get("running"):
         return
+
     pos = state.get("open_position")
     if not pos:
         return
@@ -89,10 +93,26 @@ async def sl_check_job(bot, chat_id):
 def setup_scheduler(app, chat_id):
     scheduler = AsyncIOScheduler(timezone=pytz.timezone(KST_TIMEZONE))
 
+    # 09:00 기준가 저장
     scheduler.add_job(baseline_0900_job, "cron", hour=9, minute=0, args=[app.bot, chat_id])
-    scheduler.add_job(window_collect_job, "cron", hour=9, minute="0-14", second="0,30", args=[app.bot, chat_id])
+
+    # 09:00~09:15 동안 30초마다 최고가 갱신
+    scheduler.add_job(
+        window_collect_job,
+        "cron",
+        hour=9,
+        minute="0-14",
+        second="0,30",
+        args=[app.bot, chat_id]
+    )
+
+    # 09:15 최상위 펌핑 종목 1개 선정 및 PAPER 숏 진입
     scheduler.add_job(morning_scan_job, "cron", hour=9, minute=15, args=[app.bot, chat_id])
+
+    # 오픈 포지션 감시
     scheduler.add_job(position_watch_job, "interval", seconds=30, args=[app.bot, chat_id])
+
+    # 16시 손절 체크
     scheduler.add_job(sl_check_job, "cron", hour=16, minute=0, args=[app.bot, chat_id])
 
     scheduler.start()

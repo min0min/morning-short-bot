@@ -3,12 +3,24 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 
 from config import TELEGRAM_BOT_TOKEN
 from storage import (
-    load_state, save_state, load_trades, save_baseline, reset_window,
-    update_window_with_snapshot, get_peak_candidates
+    load_state,
+    save_state,
+    load_trades,
+    save_baseline,
+    reset_window,
+    update_window_with_snapshot,
+    get_peak_candidates,
 )
-from messages import main_menu_text, status_message, entry_message, scan_result_message
+from messages import (
+    main_menu_text,
+    status_message,
+    entry_message,
+    scan_result_message,
+    today_pump_test_message,
+)
 from exchanges import get_crosslisted_futures_snapshot, get_exchange_debug_text
 from strategy import create_position
+from today_scan import scan_today_pump
 
 WAITING_SEED = "waiting_seed"
 
@@ -23,17 +35,17 @@ def main_keyboard():
         [InlineKeyboardButton("🧪 기준가 저장 테스트", callback_data="test_baseline")],
         [InlineKeyboardButton("🧪 최고가 갱신 테스트", callback_data="test_window")],
         [InlineKeyboardButton("🧪 피크 스캔 테스트", callback_data="test_peak_scan")],
+        [InlineKeyboardButton("🧪 오늘 급등 테스트", callback_data="today_pump_test")],
         [InlineKeyboardButton("🔍 거래소 디버그", callback_data="debug_exchange")],
-        [InlineKeyboardButton("📢 안내사항", callback_data="notice")]
+        [InlineKeyboardButton("📢 안내사항", callback_data="notice")],
     ]
     return InlineKeyboardMarkup(rows)
 
 async def send_main_menu(update_or_query):
-    text = main_menu_text()
     if hasattr(update_or_query, "message") and update_or_query.message:
-        await update_or_query.message.reply_text(text, reply_markup=main_keyboard())
+        await update_or_query.message.reply_text(main_menu_text(), reply_markup=main_keyboard())
     else:
-        await update_or_query.edit_message_text(text, reply_markup=main_keyboard())
+        await update_or_query.edit_message_text(main_menu_text(), reply_markup=main_keyboard())
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_main_menu(update)
@@ -46,7 +58,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "seed":
         context.user_data[WAITING_SEED] = True
-        await query.edit_message_text("💰 시드 설정\n\n카피트레이딩에 사용할 총 시드(USDT)를 입력하세요.\n\n예) 1000 → 1,000 USDT 기준으로 비중 계산\n0 입력 시 → 향후 거래소 잔고 자동 조회\n\n❌ 취소하려면 /start")
+        await query.edit_message_text(
+            "💰 시드 설정\n\n카피트레이딩에 사용할 총 시드(USDT)를 입력하세요.\n\n예) 1000 → 1,000 USDT 기준으로 비중 계산\n0 입력 시 → 향후 거래소 잔고 자동 조회\n\n❌ 취소하려면 /start"
+        )
 
     elif data == "start_paper":
         state["running"] = True
@@ -62,19 +76,22 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(status_message(state), reply_markup=main_keyboard())
 
     elif data == "history":
-        trades = load_trades()[-5:]
+        trades = load_trades()[-7:]
         if not trades:
             msg = "📋 거래 내역\n\n아직 거래 내역이 없습니다."
         else:
             msg = "📋 최근 거래 내역\n\n"
             for t in trades:
                 p = t.get("position", {})
-                msg += f"- {t.get('type')} / {p.get('base')} / {p.get('close_reason', '')}\n"
+                msg += f"- {t.get('type')} / {p.get('base')} / {t.get('reason', p.get('close_reason', ''))}\n"
         await query.edit_message_text(msg, reply_markup=main_keyboard())
 
     elif data == "profit":
         pnl = float(state["paper_balance"]) - float(state["seed_usdt"])
-        await query.edit_message_text(f"💵 가상 수익 현황\n\n시작 시드 : ${state['seed_usdt']:,.2f}\n현재 잔고 : ${state['paper_balance']:,.2f}\n누적 손익 : ${pnl:,.2f}", reply_markup=main_keyboard())
+        await query.edit_message_text(
+            f"💵 가상 수익 현황\n\n시작 시드 : ${state['seed_usdt']:,.2f}\n현재 잔고 : ${state['paper_balance']:,.2f}\n누적 손익 : ${pnl:,.2f}",
+            reply_markup=main_keyboard()
+        )
 
     elif data == "settings":
         s = state["settings"]
@@ -115,11 +132,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "test_peak_scan":
         try:
             threshold = state["settings"]["pump_threshold_pct"]
-            candidates, signal = get_peak_candidates(threshold)
+            candidates, signal = get_peak_candidates(threshold, include_below=False)
             msg = scan_result_message(candidates, threshold)
 
             if signal and not state.get("open_position"):
-                pos = create_position(signal)
+                pos = create_position(signal, reason="MANUAL_PEAK_SCAN_TEST")
                 msg += "\n\n" + entry_message(pos, signal)
             elif signal and state.get("open_position"):
                 msg += "\n\n⚠️ 이미 오픈 포지션이 있어서 중복 진입은 막았습니다."
@@ -128,18 +145,43 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await query.edit_message_text(f"❌ 피크 스캔 테스트 실패\n\n{type(e).__name__}: {e}", reply_markup=main_keyboard())
 
+    elif data == "today_pump_test":
+        try:
+            threshold = state["settings"]["pump_threshold_pct"]
+            candidates, signal = await scan_today_pump(threshold)
+            msg = today_pump_test_message(candidates, threshold)
+
+            if signal and not state.get("open_position"):
+                pos = create_position(signal, reason="MANUAL_TODAY_PUMP_TEST")
+                msg += "\n\n" + entry_message(pos, signal)
+            elif signal and state.get("open_position"):
+                msg += "\n\n⚠️ 이미 오픈 포지션이 있어서 중복 진입은 막았습니다."
+
+            await query.edit_message_text(msg, reply_markup=main_keyboard())
+        except Exception as e:
+            await query.edit_message_text(f"❌ 오늘 급등 테스트 실패\n\n{type(e).__name__}: {e}", reply_markup=main_keyboard())
+
     elif data == "debug_exchange":
         try:
             snapshot = await get_crosslisted_futures_snapshot()
-            await query.edit_message_text(f"🔍 [거래소 디버그 실행 완료]\n\n스냅샷 종목 수: {len(snapshot)}개\n\n{get_exchange_debug_text()}", reply_markup=main_keyboard())
+            await query.edit_message_text(
+                f"🔍 [거래소 디버그 실행 완료]\n\n스냅샷 종목 수: {len(snapshot)}개\n\n{get_exchange_debug_text()}",
+                reply_markup=main_keyboard()
+            )
         except Exception as e:
-            await query.edit_message_text(f"❌ 거래소 디버그 실패\n\n{type(e).__name__}: {e}\n\n{get_exchange_debug_text()}", reply_markup=main_keyboard())
+            await query.edit_message_text(
+                f"❌ 거래소 디버그 실패\n\n{type(e).__name__}: {e}\n\n{get_exchange_debug_text()}",
+                reply_markup=main_keyboard()
+            )
 
     elif data == "api":
-        await query.edit_message_text("🔑 API 키 등록\n\n현재 v1.4는 PAPER MODE라 주문 API가 필요 없습니다.\n가격 조회는 공개 API로 진행합니다.", reply_markup=main_keyboard())
+        await query.edit_message_text("🔑 API 키 등록\n\n현재 v1.5는 PAPER MODE라 주문 API가 필요 없습니다.\n가격 조회는 공개 API로 진행합니다.", reply_markup=main_keyboard())
 
     elif data == "notice":
-        await query.edit_message_text("📢 안내사항\n\n이 봇은 실주문을 넣지 않는 모의투자 봇입니다.\n실제 돈이 움직이지 않습니다.\n\nv1.4: 09:00~09:15 동안 30초마다 최고가를 추적하고, 최고 상승률 1등만 선정합니다.", reply_markup=main_keyboard())
+        await query.edit_message_text(
+            "📢 안내사항\n\n이 봇은 실주문을 넣지 않는 모의투자 봇입니다.\n실제 돈이 움직이지 않습니다.\n\nv1.5: 09:00~09:15 동안 30초마다 최고가를 추적하고, 최고 상승률 1등만 선정합니다.",
+            reply_markup=main_keyboard()
+        )
 
     else:
         await query.edit_message_text("준비중입니다.", reply_markup=main_keyboard())
@@ -150,7 +192,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             value = float(text)
             if value == 0:
-                await update.message.reply_text("🔄 0 입력 확인\n\n향후 거래소 잔고 자동 조회 모드로 연결 예정입니다.\n현재 PAPER v1.4에서는 고정 시드를 입력해주세요.")
+                await update.message.reply_text("🔄 0 입력 확인\n\n향후 거래소 잔고 자동 조회 모드로 연결 예정입니다.\n현재 PAPER v1.5에서는 고정 시드를 입력해주세요.")
                 return
             if value <= 0:
                 raise ValueError()

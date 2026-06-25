@@ -1,4 +1,5 @@
 import asyncio
+
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, PAPER_SEED_USDT
 from storage import load_state, save_state
 from telegram_bot import build_app
@@ -13,16 +14,17 @@ def bootstrap_state():
 
 async def main():
     if not TELEGRAM_BOT_TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN이 비어있습니다. .env를 확인하세요.")
+        raise RuntimeError("TELEGRAM_BOT_TOKEN이 비어있습니다. Railway Variables 또는 .env를 확인하세요.")
     if not TELEGRAM_CHAT_ID:
-        raise RuntimeError("TELEGRAM_CHAT_ID가 비어있습니다. .env를 확인하세요.")
+        raise RuntimeError("TELEGRAM_CHAT_ID가 비어있습니다. Railway Variables 또는 .env를 확인하세요.")
 
     bootstrap_state()
-    app = build_app()
 
+    app = build_app()
     setup_scheduler(app, TELEGRAM_CHAT_ID)
 
-    print("Morning Short Paper Bot started.")
+    print("Morning Short Paper Bot v1.5 started.")
+
     await app.initialize()
     await app.start()
     await app.updater.start_polling()

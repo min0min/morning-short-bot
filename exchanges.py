@@ -13,16 +13,17 @@ LAST_DEBUG = {
     "cross_upbit_bithumb_count": 0,
     "cross_final_count": 0,
     "cross_final_samples": [],
-    "error": None
+    "error": None,
 }
 
 def normalize_base(symbol: str) -> str:
     if not symbol:
         return ""
     s = str(symbol).upper()
-    s = s.replace("-", "").replace("_UMCBL", "").replace("_DMCBL", "").replace("_SUMCBL", "")
+    s = s.replace("-", "")
+    s = s.replace("_UMCBL", "").replace("_DMCBL", "").replace("_SUMCBL", "")
     s = s.replace("USDT", "").replace("USDC", "").replace("USD", "")
-    s = re.sub(r"^\d+", "", s)
+    s = re.sub(r"^\d+", "", s)  # 1000PEPE -> PEPE
     return s.strip()
 
 async def fetch_json(url, params=None):
@@ -38,6 +39,7 @@ async def get_upbit_krw_markets():
         market = item.get("market", "")
         if market.startswith("KRW-"):
             result.add(market.replace("KRW-", "").upper())
+
     LAST_DEBUG["upbit_count"] = len(result)
     LAST_DEBUG["upbit_samples"] = sorted(list(result))[:20]
     return result
@@ -46,6 +48,7 @@ async def get_bithumb_krw_markets():
     data = await fetch_json("https://api.bithumb.com/public/ticker/ALL_KRW")
     tickers = data.get("data", {})
     result = {k.upper() for k in tickers.keys() if k != "date"}
+
     LAST_DEBUG["bithumb_count"] = len(result)
     LAST_DEBUG["bithumb_samples"] = sorted(list(result))[:20]
     return result
@@ -54,6 +57,7 @@ async def get_bitget_usdt_futures_symbols():
     url = "https://api.bitget.com/api/v2/mix/market/contracts"
     data = await fetch_json(url, {"productType": "USDT-FUTURES"})
     rows = data.get("data", [])
+
     result = {}
     samples = []
 
@@ -61,6 +65,7 @@ async def get_bitget_usdt_futures_symbols():
         symbol = item.get("symbol", "")
         base = item.get("baseCoin", "") or normalize_base(symbol)
         base_norm = normalize_base(base) or normalize_base(symbol)
+
         if base_norm and symbol:
             result[base_norm] = symbol
             if len(samples) < 20:
@@ -74,6 +79,7 @@ async def get_bitget_tickers():
     url = "https://api.bitget.com/api/v2/mix/market/tickers"
     data = await fetch_json(url, {"productType": "USDT-FUTURES"})
     rows = data.get("data", [])
+
     LAST_DEBUG["bitget_ticker_count"] = len(rows)
     LAST_DEBUG["bitget_ticker_samples"] = [
         str({"symbol": t.get("symbol"), "baseCoin": t.get("baseCoin"), "lastPr": t.get("lastPr")})
@@ -91,6 +97,7 @@ async def get_bitget_price(symbol):
 async def get_crosslisted_futures_snapshot():
     try:
         LAST_DEBUG["error"] = None
+
         upbit = await get_upbit_krw_markets()
         bithumb = await get_bithumb_krw_markets()
         futures = await get_bitget_usdt_futures_symbols()
@@ -104,6 +111,7 @@ async def get_crosslisted_futures_snapshot():
         LAST_DEBUG["cross_final_samples"] = sorted(list(cross_final))[:30]
 
         snapshot = {}
+
         for t in tickers:
             symbol = t.get("symbol", "")
             base = t.get("baseCoin", "") or normalize_base(symbol)
@@ -120,8 +128,9 @@ async def get_crosslisted_futures_snapshot():
             snapshot[base_norm] = {
                 "base": base_norm,
                 "symbol": futures.get(base_norm, symbol),
-                "price": price
+                "price": price,
             }
+
         return snapshot
 
     except Exception as e:
