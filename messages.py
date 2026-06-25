@@ -6,6 +6,10 @@ def main_menu_text():
 
 def entry_message(pos, signal):
     e = pos["entries"][0]
+    peak_info = ""
+    if signal.get("peak_price") is not None:
+        peak_info = f"\n09:00 기준가 : {signal.get('baseline_price')}\n15분 최고가 : {signal.get('peak_price')}\n현재가 : {signal.get('price')}\n"
+
     return f"""🚨 [PAPER ENTRY]
 
 종목 : {pos['base']}
@@ -15,8 +19,8 @@ def entry_message(pos, signal):
 ✅ 업비트 상장
 ✅ 빗썸 상장
 ✅ 비트겟 선물 가능
-✅ 급등률 1위 ({signal['change_pct']:.2f}%)
-
+✅ 15분 최고 상승률 1위 (+{signal['change_pct']:.2f}%)
+{peak_info}
 ------------------
 
 가상 시드 : {fmt_usdt(pos['total_margin'] / 0.02)}
@@ -87,3 +91,33 @@ def status_message(state):
 
 오픈 포지션 :
 {position_text}"""
+
+def scan_result_message(candidates, threshold):
+    if not candidates:
+        return f"""📭 [09:15 PEAK SCAN]
+
+09:00~09:15 최고 상승률 기준
++{threshold}% 이상 급등 종목 없음
+
+진입 없음"""
+
+    top_lines = ""
+    for i, c in enumerate(candidates[:20], 1):
+        top_lines += (
+            f"{i}. {c['base']} "
+            f"최고 +{c['change_pct']:.2f}% "
+            f"/ 현재 +{c.get('last_change_pct', 0):.2f}%\n"
+        )
+
+    winner = candidates[0]
+    return f"""📈 [09:15 PEAK SCAN 결과]
+
+09:00~09:15 동안
+최고 상승률 기준 TOP 후보
+
+{top_lines}
+
+🎯 선정 종목
+{winner['base']} / 최고 +{winner['change_pct']:.2f}%
+
+이 종목만 PAPER 숏 진입합니다."""

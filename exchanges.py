@@ -12,27 +12,17 @@ LAST_DEBUG = {
     "bitget_ticker_samples": [],
     "cross_upbit_bithumb_count": 0,
     "cross_final_count": 0,
-    "cross_upbit_bithumb_samples": [],
     "cross_final_samples": [],
     "error": None
 }
 
 def normalize_base(symbol: str) -> str:
-    """
-    거래소별 심볼을 최대한 같은 코인명으로 맞춤.
-    예:
-    BTCUSDT -> BTC
-    BTCUSDT_UMCBL -> BTC
-    1000PEPEUSDT -> PEPE
-    1000BONKUSDT -> BONK
-    """
     if not symbol:
         return ""
-
     s = str(symbol).upper()
     s = s.replace("-", "").replace("_UMCBL", "").replace("_DMCBL", "").replace("_SUMCBL", "")
     s = s.replace("USDT", "").replace("USDC", "").replace("USD", "")
-    s = re.sub(r"^\d+", "", s)  # 1000PEPE -> PEPE
+    s = re.sub(r"^\d+", "", s)
     return s.strip()
 
 async def fetch_json(url, params=None):
@@ -61,26 +51,16 @@ async def get_bithumb_krw_markets():
     return result
 
 async def get_bitget_usdt_futures_symbols():
-    """
-    Bitget contracts API에서 선물 가능 심볼을 가져옴.
-    key = 정규화된 base coin
-    value = 실제 Bitget symbol
-    """
     url = "https://api.bitget.com/api/v2/mix/market/contracts"
     data = await fetch_json(url, {"productType": "USDT-FUTURES"})
     rows = data.get("data", [])
-
     result = {}
     samples = []
 
     for item in rows:
         symbol = item.get("symbol", "")
         base = item.get("baseCoin", "") or normalize_base(symbol)
-
-        base_norm = normalize_base(base)
-        if not base_norm:
-            base_norm = normalize_base(symbol)
-
+        base_norm = normalize_base(base) or normalize_base(symbol)
         if base_norm and symbol:
             result[base_norm] = symbol
             if len(samples) < 20:
@@ -94,17 +74,11 @@ async def get_bitget_tickers():
     url = "https://api.bitget.com/api/v2/mix/market/tickers"
     data = await fetch_json(url, {"productType": "USDT-FUTURES"})
     rows = data.get("data", [])
-
-    samples = []
-    for t in rows[:20]:
-        samples.append(str({
-            "symbol": t.get("symbol"),
-            "baseCoin": t.get("baseCoin"),
-            "lastPr": t.get("lastPr")
-        }))
-
     LAST_DEBUG["bitget_ticker_count"] = len(rows)
-    LAST_DEBUG["bitget_ticker_samples"] = samples
+    LAST_DEBUG["bitget_ticker_samples"] = [
+        str({"symbol": t.get("symbol"), "baseCoin": t.get("baseCoin"), "lastPr": t.get("lastPr")})
+        for t in rows[:20]
+    ]
     return rows
 
 async def get_bitget_price(symbol):
@@ -115,12 +89,8 @@ async def get_bitget_price(symbol):
     raise ValueError(f"price not found: {symbol}")
 
 async def get_crosslisted_futures_snapshot():
-    """
-    업비트 KRW + 빗썸 KRW + 비트겟 USDT 선물 교차상장 종목들의 현재가 스냅샷.
-    """
     try:
         LAST_DEBUG["error"] = None
-
         upbit = await get_upbit_krw_markets()
         bithumb = await get_bithumb_krw_markets()
         futures = await get_bitget_usdt_futures_symbols()
@@ -131,18 +101,13 @@ async def get_crosslisted_futures_snapshot():
 
         LAST_DEBUG["cross_upbit_bithumb_count"] = len(cross_kr)
         LAST_DEBUG["cross_final_count"] = len(cross_final)
-        LAST_DEBUG["cross_upbit_bithumb_samples"] = sorted(list(cross_kr))[:30]
         LAST_DEBUG["cross_final_samples"] = sorted(list(cross_final))[:30]
 
         snapshot = {}
-
         for t in tickers:
             symbol = t.get("symbol", "")
             base = t.get("baseCoin", "") or normalize_base(symbol)
-            base_norm = normalize_base(base)
-
-            if not base_norm:
-                base_norm = normalize_base(symbol)
+            base_norm = normalize_base(base) or normalize_base(symbol)
 
             if base_norm not in cross_final:
                 continue
@@ -152,49 +117,16 @@ async def get_crosslisted_futures_snapshot():
             except Exception:
                 continue
 
-            # contracts API의 실제 symbol이 있으면 그걸 우선 사용
-            real_symbol = futures.get(base_norm, symbol)
-
             snapshot[base_norm] = {
                 "base": base_norm,
-                "symbol": real_symbol,
+                "symbol": futures.get(base_norm, symbol),
                 "price": price
             }
-
         return snapshot
 
     except Exception as e:
         LAST_DEBUG["error"] = f"{type(e).__name__}: {e}"
         raise
-
-async def scan_top_15min_pump_crosslisted(baseline_snapshot, threshold_pct=3.0):
-    current = await get_crosslisted_futures_snapshot()
-    candidates = []
-
-    for base, now in current.items():
-        old = baseline_snapshot.get(base)
-        if not old:
-            continue
-
-        old_price = float(old["price"])
-        now_price = float(now["price"])
-
-        if old_price <= 0:
-            continue
-
-        pump_pct = ((now_price - old_price) / old_price) * 100
-
-        if pump_pct >= threshold_pct:
-            candidates.append({
-                "base": base,
-                "symbol": now["symbol"],
-                "change_pct": pump_pct,
-                "price": now_price,
-                "baseline_price": old_price
-            })
-
-    candidates.sort(key=lambda x: x["change_pct"], reverse=True)
-    return candidates[0] if candidates else None, candidates
 
 def get_exchange_debug_text():
     def samples(key):
@@ -211,17 +143,11 @@ def get_exchange_debug_text():
 업비트 ∩ 빗썸 : {LAST_DEBUG.get('cross_upbit_bithumb_count')}개
 업비트 ∩ 빗썸 ∩ 비트겟선물 : {LAST_DEBUG.get('cross_final_count')}개
 
-업비트 예시:
-{samples('upbit_samples')}
-
-빗썸 예시:
-{samples('bithumb_samples')}
+최종 교차 예시:
+{samples('cross_final_samples')}
 
 비트겟 계약 예시:
 {samples('bitget_contract_samples')}
-
-최종 교차 예시:
-{samples('cross_final_samples')}
 
 에러:
 {LAST_DEBUG.get('error') or '없음'}"""
