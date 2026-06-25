@@ -173,3 +173,45 @@ def today_pump_test_message(candidates, threshold):
 {winner['base']} +{winner['change_pct']:.2f}%
 
 PAPER 숏 진입 대상으로 선정합니다."""
+
+
+def backtest_result_message(date_text, candidates, threshold, total_symbols, errors=0):
+    if not candidates:
+        return f"""🧪 [날짜 백테스트 결과]
+
+날짜 : {date_text}
+구간 : 09:00~09:15 KST
+추적 종목 : {total_symbols}개
+캔들 오류/누락 : {errors}개
+
++{threshold}% 이상 급등 종목 없음"""
+
+    top_lines = ""
+    for i, c in enumerate(candidates[:20], 1):
+        top_lines += (
+            f"{i}. {c['base']} "
+            f"최고 +{c['change_pct']:.2f}% "
+            f"/ 09:15 +{c.get('last_change_pct', 0):.2f}%\n"
+        )
+
+    winner = candidates[0]
+    enter_text = (
+        f"✅ 진입 조건 충족\n🏆 선정 종목 : {winner['base']} +{winner['change_pct']:.2f}%"
+        if winner["change_pct"] >= threshold
+        else f"⚠️ 진입 조건 미충족\n최고 종목 : {winner['base']} +{winner['change_pct']:.2f}%"
+    )
+
+    return f"""🧪 [날짜 백테스트 결과]
+
+날짜 : {date_text}
+구간 : 09:00~09:15 KST
+추적 종목 : {total_symbols}개
+캔들 오류/누락 : {errors}개
+
+09:00~09:15 최고 상승률 TOP20
+
+{top_lines}
+
+{enter_text}
+
+※ 백테스트는 실제 PAPER 포지션을 만들지 않습니다."""

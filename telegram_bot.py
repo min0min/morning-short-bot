@@ -17,11 +17,14 @@ from messages import (
     entry_message,
     scan_result_message,
     today_pump_test_message,
+    backtest_result_message,
 )
 from exchanges import get_crosslisted_futures_snapshot, get_exchange_debug_text
 from strategy import create_position
+from backtest import run_date_backtest
 
 WAITING_SEED = "waiting_seed"
+WAITING_BACKTEST_DATE = "waiting_backtest_date"
 
 def main_keyboard():
     rows = [
@@ -35,6 +38,7 @@ def main_keyboard():
         [InlineKeyboardButton("🧪 최고가 갱신 테스트", callback_data="test_window")],
         [InlineKeyboardButton("🧪 피크 스캔 테스트", callback_data="test_peak_scan")],
         [InlineKeyboardButton("🧪 15분 전략 테스트", callback_data="today_pump_test")],
+        [InlineKeyboardButton("🧪 날짜 백테스트", callback_data="date_backtest")],
         [InlineKeyboardButton("🔍 거래소 디버그", callback_data="debug_exchange")],
         [InlineKeyboardButton("📢 안내사항", callback_data="notice")],
     ]
@@ -182,12 +186,19 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=main_keyboard()
             )
 
+    elif data == "date_backtest":
+        context.user_data[WAITING_BACKTEST_DATE] = True
+        await query.edit_message_text(
+            "🧪 날짜 백테스트\n\n조회할 날짜를 입력하세요.\n\n예) 2026-06-25\n\n해당 날짜의 09:00~09:15 KST 구간을 과거 1분봉으로 재현합니다.",
+            reply_markup=main_keyboard()
+        )
+
     elif data == "api":
-        await query.edit_message_text("🔑 API 키 등록\n\n현재 v1.6는 PAPER MODE라 주문 API가 필요 없습니다.\n가격 조회는 공개 API로 진행합니다.", reply_markup=main_keyboard())
+        await query.edit_message_text("🔑 API 키 등록\n\n현재 v1.8는 PAPER MODE라 주문 API가 필요 없습니다.\n가격 조회는 공개 API로 진행합니다.", reply_markup=main_keyboard())
 
     elif data == "notice":
         await query.edit_message_text(
-            "📢 안내사항\n\n이 봇은 실주문을 넣지 않는 모의투자 봇입니다.\n실제 돈이 움직이지 않습니다.\n\nv1.6: 09:00~09:15 동안 30초마다 최고가를 추적하고, 최고 상승률 1등만 선정합니다.",
+            "📢 안내사항\n\n이 봇은 실주문을 넣지 않는 모의투자 봇입니다.\n실제 돈이 움직이지 않습니다.\n\nv1.8: 09:00~09:15 동안 30초마다 최고가를 추적하고, 최고 상승률 1등만 선정합니다.",
             reply_markup=main_keyboard()
         )
 
@@ -195,12 +206,42 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("준비중입니다.", reply_markup=main_keyboard())
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get(WAITING_BACKTEST_DATE):
+        date_text = update.message.text.strip()
+        try:
+            # 간단한 형식 검증
+            from datetime import datetime
+            datetime.strptime(date_text, "%Y-%m-%d")
+
+            context.user_data[WAITING_BACKTEST_DATE] = False
+            wait_msg = await update.message.reply_text(
+                f"🧪 날짜 백테스트 실행중...\n\n날짜 : {date_text}\n구간 : 09:00~09:15 KST\n\n종목 수가 많아서 10~60초 정도 걸릴 수 있습니다."
+            )
+
+            state = load_state()
+            threshold = state["settings"]["pump_threshold_pct"]
+            result = await run_date_backtest(date_text, threshold)
+            msg = backtest_result_message(
+                date_text,
+                result["candidates"],
+                threshold,
+                result["total_symbols"],
+                result["errors"],
+            )
+            await update.message.reply_text(msg, reply_markup=main_keyboard())
+            return
+
+        except Exception as e:
+            context.user_data[WAITING_BACKTEST_DATE] = False
+            await update.message.reply_text(f"❌ 날짜 백테스트 실패\n\n{type(e).__name__}: {e}", reply_markup=main_keyboard())
+            return
+
     if context.user_data.get(WAITING_SEED):
         text = update.message.text.strip()
         try:
             value = float(text)
             if value == 0:
-                await update.message.reply_text("🔄 0 입력 확인\n\n향후 거래소 잔고 자동 조회 모드로 연결 예정입니다.\n현재 PAPER v1.5에서는 고정 시드를 입력해주세요.")
+                await update.message.reply_text("🔄 0 입력 확인\n\n향후 거래소 잔고 자동 조회 모드로 연결 예정입니다.\n현재 PAPER v1.8에서는 고정 시드를 입력해주세요.")
                 return
             if value <= 0:
                 raise ValueError()

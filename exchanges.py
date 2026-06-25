@@ -160,3 +160,57 @@ def get_exchange_debug_text():
 
 에러:
 {LAST_DEBUG.get('error') or '없음'}"""
+
+
+async def get_bitget_1m_candles(symbol, start_ms, end_ms):
+    """
+    Bitget USDT-FUTURES 1분봉 조회.
+    09:00~09:15 백테스트용.
+    반환: [{ts, open, high, low, close}]
+    """
+    endpoints = [
+        "https://api.bitget.com/api/v2/mix/market/candles",
+        "https://api.bitget.com/api/v2/mix/market/history-candles",
+    ]
+
+    last_error = None
+
+    for url in endpoints:
+        try:
+            data = await fetch_json(url, {
+                "symbol": symbol,
+                "productType": "USDT-FUTURES",
+                "granularity": "1m",
+                "startTime": str(int(start_ms)),
+                "endTime": str(int(end_ms)),
+                "limit": "100"
+            })
+
+            rows = data.get("data", [])
+            result = []
+
+            for row in rows:
+                # Bitget candles usually:
+                # [timestamp, open, high, low, close, baseVol, quoteVol]
+                try:
+                    result.append({
+                        "ts": int(row[0]),
+                        "open": float(row[1]),
+                        "high": float(row[2]),
+                        "low": float(row[3]),
+                        "close": float(row[4]),
+                    })
+                except Exception:
+                    continue
+
+            result.sort(key=lambda x: x["ts"])
+            if result:
+                return result
+
+        except Exception as e:
+            last_error = e
+            continue
+
+    if last_error:
+        raise last_error
+    return []
