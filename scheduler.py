@@ -42,9 +42,9 @@ async def morning_scan_job(bot, chat_id):
         return
 
     threshold = state["settings"]["pump_threshold_pct"]
-    candidates, signal = get_peak_candidates(threshold, include_below=False)
+    candidates, signal = get_peak_candidates(threshold, include_below=True, limit=20)
 
-    await bot.send_message(chat_id=chat_id, text=scan_result_message(candidates, threshold))
+    await bot.send_message(chat_id=chat_id, text=scan_result_message(candidates, threshold, signal=signal, include_below=True))
 
     if not signal:
         return

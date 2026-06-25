@@ -131,8 +131,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "test_peak_scan":
         try:
             threshold = state["settings"]["pump_threshold_pct"]
-            candidates, signal = get_peak_candidates(threshold, include_below=False)
-            msg = scan_result_message(candidates, threshold)
+            candidates, signal = get_peak_candidates(threshold, include_below=True, limit=20)
+            msg = scan_result_message(candidates, threshold, signal=signal, include_below=True)
 
             if signal and not state.get("open_position"):
                 pos = create_position(signal, reason="MANUAL_PEAK_SCAN_TEST")
@@ -152,12 +152,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # 이 버튼도 24시간 변동률을 쓰지 않는다.
             # 반드시 기준가 저장 테스트 → 최고가 갱신 테스트 이후의
             # window_0900_0915 데이터만 사용한다.
-            candidates, signal = get_peak_candidates(threshold, include_below=False)
+            candidates, signal = get_peak_candidates(threshold, include_below=True, limit=20)
 
             msg = "🧪 [15분 전략 테스트]\n\n"
             msg += "이 테스트는 24시간 상승률이 아니라,\n"
             msg += "마지막으로 저장한 기준가 이후의 최고 상승률만 계산합니다.\n\n"
-            msg += scan_result_message(candidates, threshold)
+            msg += scan_result_message(candidates, threshold, signal=signal, include_below=True)
 
             if signal and not state.get("open_position"):
                 pos = create_position(signal, reason="MANUAL_EXACT_15MIN_STRATEGY_TEST")

@@ -98,37 +98,56 @@ def status_message(state):
 오픈 포지션 :
 {position_text}"""
 
-def scan_result_message(candidates, threshold, include_below=False):
+def scan_result_message(candidates, threshold, signal=None, include_below=True):
+    """
+    candidates: TOP 리스트. include_below=True면 +3% 미만도 포함된 전체 TOP.
+    signal: 실제 진입 후보. +threshold 이상 중 1등. 없으면 None.
+    """
     if not candidates:
         return f"""📭 [09:15 PEAK SCAN]
 
 09:00~09:15 최고 상승률 기준
-+{threshold}% 이상 급등 종목 없음
+계산된 후보가 없습니다.
 
 진입 없음"""
 
     top_lines = ""
-    for i, c in enumerate(candidates[:20], 1):
+    for i, c in enumerate(candidates[:10], 1):
         top_lines += (
             f"{i}. {c['base']} "
             f"최고 +{c['change_pct']:.2f}% "
-            f"/ 현재 +{c.get('last_change_pct', 0):.2f}%\n"
+            f"/ 현재 +{c.get('last_change_pct', 0):.2f}%
+"
         )
 
-    winner = candidates[0]
-    filter_text = "전체 TOP20" if include_below else f"+{threshold}% 이상 후보"
+    if signal:
+        return f"""📈 [09:15 PEAK SCAN 결과]
 
-    return f"""📈 [09:15 PEAK SCAN 결과]
-
-09:00~09:15 동안
-최고 상승률 기준 {filter_text}
+09:00~09:15 최고 상승률 TOP10
 
 {top_lines}
 
-🎯 선정 종목
-{winner['base']} / 최고 +{winner['change_pct']:.2f}%
+🎯 진입 조건 충족
+기준 : +{threshold}% 이상
+
+🏆 선정 종목
+{signal['base']} / 최고 +{signal['change_pct']:.2f}%
 
 이 종목만 PAPER 숏 진입합니다."""
+
+    return f"""📭 [09:15 PEAK SCAN 결과]
+
+09:00~09:15 최고 상승률 TOP10
+
+{top_lines}
+
+⚠️ 진입 조건 미충족
+기준 : +{threshold}% 이상
+
++{threshold}% 이상 급등 종목 없음
+
+진입 없음"""
+
 
 def today_pump_test_message(candidates, threshold):
     if not candidates:
