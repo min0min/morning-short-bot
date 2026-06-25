@@ -2,8 +2,10 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
 from config import TELEGRAM_BOT_TOKEN
-from storage import load_state, save_state, load_trades
-from messages import main_menu_text, status_message
+from storage import load_state, save_state, load_trades, save_baseline, load_baseline
+from messages import main_menu_text, status_message, entry_message
+from exchanges import get_crosslisted_futures_snapshot, scan_top_15min_pump_crosslisted
+from strategy import create_position
 
 WAITING_SEED = "waiting_seed"
 
@@ -15,6 +17,8 @@ def main_keyboard():
         [InlineKeyboardButton("💵 가상 수익 현황", callback_data="profit"), InlineKeyboardButton("📈 신호 통계", callback_data="stats")],
         [InlineKeyboardButton("⚙️ 비율·익절 설정", callback_data="settings")],
         [InlineKeyboardButton("🎯 종목 선정 기준", callback_data="criteria")],
+        [InlineKeyboardButton("🧪 기준가 저장 테스트", callback_data="test_baseline")],
+        [InlineKeyboardButton("🧪 15분 스캔 테스트", callback_data="test_scan")],
         [InlineKeyboardButton("📢 안내사항", callback_data="notice")]
     ]
     return InlineKeyboardMarkup(rows)
@@ -40,16 +44,20 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "💰 시드 설정\n\n카피트레이딩에 사용할 총 시드(USDT)를 입력하세요.\n\n예) 1000 → 1,000 USDT 기준으로 비중 계산\n0 입력 시 → 향후 거래소 잔고 자동 조회\n\n❌ 취소하려면 /start",
         )
+
     elif data == "start_paper":
         state["running"] = True
         save_state(state)
         await query.edit_message_text("✅ 모의투자 시작\n\n상태 : PAPER MODE ON", reply_markup=main_keyboard())
+
     elif data == "stop_paper":
         state["running"] = False
         save_state(state)
         await query.edit_message_text("⏸ 모의투자 중지\n\n상태 : PAPER MODE OFF", reply_markup=main_keyboard())
+
     elif data == "status":
         await query.edit_message_text(status_message(state), reply_markup=main_keyboard())
+
     elif data == "history":
         trades = load_trades()[-5:]
         if not trades:
@@ -60,21 +68,75 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 p = t.get("position", {})
                 msg += f"- {t.get('type')} / {p.get('base')} / {p.get('close_reason', '')}\n"
         await query.edit_message_text(msg, reply_markup=main_keyboard())
+
     elif data == "profit":
         pnl = float(state["paper_balance"]) - float(state["seed_usdt"])
         await query.edit_message_text(f"💵 가상 수익 현황\n\n시작 시드 : ${state['seed_usdt']:,.2f}\n현재 잔고 : ${state['paper_balance']:,.2f}\n누적 손익 : ${pnl:,.2f}", reply_markup=main_keyboard())
+
     elif data == "settings":
         s = state["settings"]
         await query.edit_message_text(
             f"⚙️ 비율·익절 설정\n\n1차 : {s['entry_1_pct']*100:.1f}%\n2차 : {s['entry_2_pct']*100:.1f}%\n3차 : {s['entry_3_pct']*100:.1f}%\n레버리지 : {s['leverage']}배\n추가진입 간격 : +{s['add_entry_price_move_pct']}%\n익절 : +{s['tp_leveraged_pct']}%\n16시 손절 : {s['sl_leveraged_pct']}%",
             reply_markup=main_keyboard()
         )
+
     elif data == "criteria":
-        await query.edit_message_text("🎯 종목 선정 기준\n\n09:15 KST\n업비트 + 빗썸 교차상장\n비트겟 USDT 선물 가능\n+3% 이상 급등\n상승률 1등 딱 1개만 거래", reply_markup=main_keyboard())
+        await query.edit_message_text(
+            "🎯 종목 선정 기준\n\n09:00 KST 기준가 저장\n09:15 KST 현재가 비교\n업비트 + 빗썸 교차상장\n비트겟 USDT 선물 가능\n09:00 → 09:15 기준 +3% 이상 급등\n상승률 1등 딱 1개만 거래",
+            reply_markup=main_keyboard()
+        )
+
     elif data == "api":
-        await query.edit_message_text("🔑 API 키 등록\n\n현재 v1.0은 PAPER MODE라 주문 API가 필요 없습니다.\n가격 조회는 공개 API로 진행합니다.", reply_markup=main_keyboard())
+        await query.edit_message_text("🔑 API 키 등록\n\n현재 v1.2는 PAPER MODE라 주문 API가 필요 없습니다.\n가격 조회는 공개 API로 진행합니다.", reply_markup=main_keyboard())
+
+    elif data == "test_baseline":
+        try:
+            snapshot = await get_crosslisted_futures_snapshot()
+            save_baseline(snapshot)
+            await query.edit_message_text(
+                f"🧪 [기준가 저장 테스트 완료]\n\n교차상장 + 비트겟 선물 가능 종목 {len(snapshot)}개 기준가를 지금 저장했습니다.\n\n1~15분 뒤에\n🧪 15분 스캔 테스트\n를 눌러서 급등 계산이 되는지 확인하세요.",
+                reply_markup=main_keyboard()
+            )
+        except Exception as e:
+            await query.edit_message_text(f"❌ 기준가 저장 테스트 실패\n\n{type(e).__name__}: {e}", reply_markup=main_keyboard())
+
+    elif data == "test_scan":
+        try:
+            baseline_payload = load_baseline()
+            if not baseline_payload:
+                await query.edit_message_text("⚠️ 기준가 데이터가 없습니다.\n\n먼저 🧪 기준가 저장 테스트 를 눌러주세요.", reply_markup=main_keyboard())
+                return
+
+            threshold = state["settings"]["pump_threshold_pct"]
+            signal, candidates = await scan_top_15min_pump_crosslisted(baseline_payload.get("snapshot", {}), threshold)
+
+            top_text = ""
+            for i, c in enumerate(candidates[:5], 1):
+                top_text += f"{i}. {c['base']} {c['change_pct']:.2f}%\n"
+
+            if not signal:
+                await query.edit_message_text(
+                    f"📭 [스캔 테스트]\n\n기준가 대비 +{threshold}% 이상 급등 종목 없음\n\n후보 TOP5:\n{top_text or '없음'}",
+                    reply_markup=main_keyboard()
+                )
+                return
+
+            if state.get("open_position"):
+                await query.edit_message_text(
+                    f"⚠️ 이미 오픈 포지션이 있습니다.\n\n선정 종목: {signal['base']} {signal['change_pct']:.2f}%\n하지만 중복 진입은 막았습니다.",
+                    reply_markup=main_keyboard()
+                )
+                return
+
+            pos = create_position(signal)
+            await query.edit_message_text(entry_message(pos, signal), reply_markup=main_keyboard())
+
+        except Exception as e:
+            await query.edit_message_text(f"❌ 스캔 테스트 실패\n\n{type(e).__name__}: {e}", reply_markup=main_keyboard())
+
     elif data == "notice":
-        await query.edit_message_text("📢 안내사항\n\n이 봇은 실주문을 넣지 않는 모의투자 봇입니다.\n실제 돈이 움직이지 않습니다.", reply_markup=main_keyboard())
+        await query.edit_message_text("📢 안내사항\n\n이 봇은 실주문을 넣지 않는 모의투자 봇입니다.\n실제 돈이 움직이지 않습니다.\n\nv1.2부터 수동 테스트 버튼이 추가되었습니다.", reply_markup=main_keyboard())
+
     else:
         await query.edit_message_text("준비중입니다.", reply_markup=main_keyboard())
 
@@ -84,7 +146,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             value = float(text)
             if value == 0:
-                await update.message.reply_text("🔄 0 입력 확인\n\n향후 거래소 잔고 자동 조회 모드로 연결 예정입니다.\n현재 PAPER v1.0에서는 고정 시드를 입력해주세요.")
+                await update.message.reply_text("🔄 0 입력 확인\n\n향후 거래소 잔고 자동 조회 모드로 연결 예정입니다.\n현재 PAPER v1.2에서는 고정 시드를 입력해주세요.")
                 return
             if value <= 0:
                 raise ValueError()
