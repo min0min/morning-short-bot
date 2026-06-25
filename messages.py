@@ -12,8 +12,9 @@ def entry_message(pos, signal):
         candle_info = (
             f"\n15분봉 O : {signal.get('baseline_price')}"
             f"\n15분봉 C : {signal.get('price')}"
-            f"\n참고 H : {signal.get('peak_price')}"
+            f"\n15분봉 H : {signal.get('peak_price')}"
             f"\nO→C 상승률 : +{signal.get('change_pct', 0):.2f}%"
+            f"\nH 참고 상승률 : +{signal.get('peak_change_pct', 0):.2f}%"
         )
 
     return f"""🚨 [PAPER ENTRY]
@@ -25,7 +26,7 @@ def entry_message(pos, signal):
 ✅ 업비트 상장
 ✅ 빗썸 상장
 ✅ 비트겟 선물 가능
-✅ 15분봉 O→C 상승률 1위 (+{signal['change_pct']:.2f}%)
+✅ 마감 15분봉 O→C 상승률 1위 (+{signal['change_pct']:.2f}%)
 {candle_info}
 
 ------------------
@@ -99,27 +100,31 @@ def status_message(state):
 오픈 포지션 :
 {position_text}"""
 
-def scan_result_message(candidates, threshold, signal=None, include_below=True):
+def scan_result_message(candidates, threshold, signal=None, total_symbols=None, errors=0, title="09:15 마감봉 SCAN"):
     if not candidates:
-        return f"""📭 [09:15 O→C SCAN]
+        return f"""📭 [{title}]
 
-09:00~09:15 15분봉 O→C 기준
+마감 15분봉 O→C 기준
 계산된 후보가 없습니다.
 
 진입 없음"""
 
     top_lines = ""
-    for i, c in enumerate(candidates[:10], 1):
+    for i, c in enumerate(candidates[:20], 1):
         top_lines += (
             f"{i}. {c['base']} "
             f"O→C +{c['change_pct']:.2f}% "
             f"/ H참고 +{c.get('peak_change_pct', 0):.2f}%\n"
         )
 
-    if signal:
-        return f"""📈 [09:15 O→C SCAN 결과]
+    meta = ""
+    if total_symbols is not None:
+        meta = f"추적 종목 : {total_symbols}개\n캔들 오류/누락 : {errors}개\n\n"
 
-09:00~09:15 15분봉 O→C 상승률 TOP10
+    if signal:
+        return f"""📈 [{title} 결과]
+
+{meta}마감 15분봉 O→C 상승률 TOP20
 
 {top_lines}
 
@@ -131,9 +136,9 @@ def scan_result_message(candidates, threshold, signal=None, include_below=True):
 
 이 종목만 PAPER 숏 진입합니다."""
 
-    return f"""📭 [09:15 O→C SCAN 결과]
+    return f"""📭 [{title} 결과]
 
-09:00~09:15 15분봉 O→C 상승률 TOP10
+{meta}마감 15분봉 O→C 상승률 TOP20
 
 {top_lines}
 
@@ -142,48 +147,18 @@ def scan_result_message(candidates, threshold, signal=None, include_below=True):
 
 진입 없음"""
 
-def today_pump_test_message(candidates, threshold):
-    return scan_result_message(candidates, threshold)
-
 def backtest_result_message(date_text, candidates, threshold, total_symbols, errors=0):
-    if not candidates:
-        return f"""🧪 [날짜 백테스트 결과]
-
-날짜 : {date_text}
-구간 : 09:00~09:15 KST (15분봉 O→C 기준)
-추적 종목 : {total_symbols}개
-캔들 오류/누락 : {errors}개
-
-+{threshold}% 이상 급등 종목 없음"""
-
-    top_lines = ""
-    for i, c in enumerate(candidates[:20], 1):
-        top_lines += (
-            f"{i}. {c['base']} "
-            f"O→C +{c['change_pct']:.2f}% "
-            f"/ H참고 +{c.get('peak_change_pct', 0):.2f}%\n"
-        )
-
-    winner = candidates[0]
-    if winner["change_pct"] >= threshold:
-        enter_text = f"✅ 진입 조건 충족\n🏆 선정 종목 : {winner['base']} O→C +{winner['change_pct']:.2f}%"
-    else:
-        enter_text = f"⚠️ 진입 조건 미충족\n최고 종목 : {winner['base']} O→C +{winner['change_pct']:.2f}%"
-
-    return f"""🧪 [날짜 백테스트 결과]
-
-날짜 : {date_text}
-구간 : 09:00~09:15 KST (15분봉 O→C 기준)
-추적 종목 : {total_symbols}개
-캔들 오류/누락 : {errors}개
-
-15분봉 O→C 상승률 TOP20
-
-{top_lines}
-
-{enter_text}
-
-※ 백테스트는 실제 PAPER 포지션을 만들지 않습니다."""
+    title = f"날짜 백테스트 {date_text}"
+    signal = candidates[0] if candidates and candidates[0]["change_pct"] >= threshold else None
+    msg = scan_result_message(
+        candidates,
+        threshold,
+        signal=signal,
+        total_symbols=total_symbols,
+        errors=errors,
+        title=title,
+    )
+    return msg + "\n\n※ 백테스트는 실제 PAPER 포지션을 만들지 않습니다."
 
 def weekly_backtest_result_message(results, threshold):
     lines = ""
@@ -213,7 +188,7 @@ def weekly_backtest_result_message(results, threshold):
 
     return f"""🧪 [최근 7일 자동 검증]
 
-기준 : 09:00~09:15 KST 15분봉 O→C
+기준 : 09:00~09:15 KST 마감 15분봉 O→C
 진입 기준 : +{threshold}% 이상
 
 검증일 : {total_days}일
@@ -221,5 +196,4 @@ def weekly_backtest_result_message(results, threshold):
 
 {lines}
 
-※ 이 검증은 진입 종목 선정만 확인합니다.
-※ TP/SL 결과 검증은 다음 단계에서 추가 가능합니다."""
+※ 이 검증은 진입 종목 선정만 확인합니다."""

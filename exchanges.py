@@ -266,3 +266,85 @@ async def get_bitget_15m_candles(symbol, start_ms, end_ms):
     if last_error:
         raise last_error
     return []
+
+
+# ===== v2.1 closed 15m candle helpers =====
+
+async def get_bitget_15m_candles_wide(symbol, start_ms, end_ms):
+    """
+    Bitget USDT-FUTURES 15분봉을 넓은 범위로 조회.
+    반환: [{ts, open, high, low, close}]
+    """
+    endpoints = [
+        "https://api.bitget.com/api/v2/mix/market/history-candles",
+        "https://api.bitget.com/api/v2/mix/market/candles",
+    ]
+
+    last_error = None
+
+    for url in endpoints:
+        try:
+            data = await fetch_json(url, {
+                "symbol": symbol,
+                "productType": "USDT-FUTURES",
+                "granularity": "15m",
+                "startTime": str(int(start_ms)),
+                "endTime": str(int(end_ms)),
+                "limit": "100"
+            })
+
+            rows = data.get("data", [])
+            result = []
+
+            for row in rows:
+                try:
+                    result.append({
+                        "ts": int(row[0]),
+                        "open": float(row[1]),
+                        "high": float(row[2]),
+                        "low": float(row[3]),
+                        "close": float(row[4]),
+                    })
+                except Exception:
+                    continue
+
+            result.sort(key=lambda x: x["ts"])
+            if result:
+                return result
+
+        except Exception as e:
+            last_error = e
+            continue
+
+    if last_error:
+        raise last_error
+    return []
+
+async def get_bitget_closed_15m_candle_by_open(symbol, target_open_ms):
+    """
+    특정 15분봉 open time 기준 캔들 선택.
+    예: KST 09:00 캔들 = 09:00~09:15 마감봉.
+    API 오차를 피하기 위해 앞뒤 45분 넓게 조회 후 정확한 ts를 찾는다.
+    """
+    fifteen = 15 * 60 * 1000
+    start_ms = int(target_open_ms) - 3 * fifteen
+    end_ms = int(target_open_ms) + 4 * fifteen
+
+    candles = await get_bitget_15m_candles_wide(symbol, start_ms, end_ms)
+    if not candles:
+        return None
+
+    # 1순위: 정확히 09:00 open timestamp
+    for c in candles:
+        if int(c["ts"]) == int(target_open_ms):
+            return c
+
+    # 2순위: target_open_ms가 포함되는 15분 캔들
+    for c in candles:
+        ts = int(c["ts"])
+        if ts <= int(target_open_ms) < ts + fifteen:
+            return c
+
+    # 3순위: 가장 가까운 open timestamp
+    candles.sort(key=lambda c: abs(int(c["ts"]) - int(target_open_ms)))
+    return candles[0]

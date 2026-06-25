@@ -6,24 +6,33 @@ from exchanges import get_crosslisted_futures_snapshot, get_bitget_closed_15m_ca
 
 KST = pytz.timezone("Asia/Seoul")
 
-def kst_0900_open_ms(date_text):
+def latest_closed_15m_open_ms(now=None):
     """
-    YYYY-MM-DD 기준 KST 09:00 15분봉 open timestamp(ms).
-    알림봇 기준:
-    09:00에 시작한 15분봉이 09:15에 마감됨.
+    현재 시각 기준 가장 최근에 마감된 15분봉의 open timestamp.
+    09:15에 실행되면 09:00 open 캔들을 선택.
     """
-    dt = KST.localize(datetime.strptime(date_text + " 09:00:00", "%Y-%m-%d %H:%M:%S"))
-    return int(dt.timestamp() * 1000)
+    if now is None:
+        now = datetime.now(KST)
+    elif now.tzinfo is None:
+        now = KST.localize(now)
+    else:
+        now = now.astimezone(KST)
 
-async def run_date_backtest(date_text, threshold_pct=3.0):
+    minute = (now.minute // 15) * 15
+    boundary = now.replace(minute=minute, second=0, microsecond=0)
+
+    # 정확히 09:15에 실행되면 boundary=09:15, 직전 캔들 open=09:00
+    target_open = boundary - timedelta(minutes=15)
+    return int(target_open.timestamp() * 1000), target_open
+
+async def scan_latest_closed_15m_oc(threshold_pct=3.0):
     """
-    알림봇과 동일한 기준:
-    - Bitget USDT 선물 15분봉
-    - KST 09:00에 시작해서 09:15에 마감된 캔들
-    - 상승률 = (Close - Open) / Open * 100
-    - 업비트 + 빗썸 교차상장 + Bitget 선물 가능 종목만 대상
+    실시간 자동 전략:
+    - 최근 마감된 15분봉 O→C 기준
+    - Bitget 선물 전 종목 중 업비트+빗썸 교차상장 필터
+    - +threshold 이상 후보 중 TOP1
     """
-    target_open_ms = kst_0900_open_ms(date_text)
+    target_open_ms, target_open_dt = latest_closed_15m_open_ms()
 
     snapshot = await get_crosslisted_futures_snapshot()
     items = list(snapshot.values())
@@ -56,7 +65,7 @@ async def run_date_backtest(date_text, threshold_pct=3.0):
                 return {
                     "base": item["base"],
                     "symbol": item["symbol"],
-                    "change_pct": oc_pct,       # 최종 선정 기준: O→C
+                    "change_pct": oc_pct,
                     "last_change_pct": oc_pct,
                     "peak_change_pct": high_pct,
                     "price": c,
@@ -64,7 +73,7 @@ async def run_date_backtest(date_text, threshold_pct=3.0):
                     "peak_price": h,
                     "low_price": l,
                     "candle_ts": candle["ts"],
-                    "peak_time": "KST 09:00~09:15 closed 15m candle",
+                    "peak_time": target_open_dt.strftime("%Y-%m-%d %H:%M KST"),
                 }
 
             except Exception:
@@ -78,38 +87,12 @@ async def run_date_backtest(date_text, threshold_pct=3.0):
             candidates.append(row)
 
     candidates.sort(key=lambda x: x["change_pct"], reverse=True)
+    signal = candidates[0] if candidates and candidates[0]["change_pct"] >= threshold_pct else None
 
     return {
-        "date": date_text,
+        "target_open": target_open_dt.strftime("%Y-%m-%d %H:%M KST"),
         "total_symbols": len(items),
         "errors": errors,
         "candidates": candidates,
-        "signal": candidates[0] if candidates and candidates[0]["change_pct"] >= threshold_pct else None,
+        "signal": signal,
     }
-
-def last_n_dates(n=7, end_date_text=None):
-    if end_date_text:
-        end_date = datetime.strptime(end_date_text, "%Y-%m-%d").date()
-    else:
-        end_date = datetime.now(KST).date()
-
-    return [(end_date - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(n - 1, -1, -1)]
-
-async def run_recent_days_backtest(days=7, threshold_pct=3.0, end_date_text=None):
-    dates = last_n_dates(days, end_date_text)
-    results = []
-
-    for d in dates:
-        try:
-            r = await run_date_backtest(d, threshold_pct)
-            results.append(r)
-        except Exception as e:
-            results.append({
-                "date": d,
-                "total_symbols": 0,
-                "errors": 1,
-                "candidates": [],
-                "error": f"{type(e).__name__}: {e}",
-            })
-
-    return results
