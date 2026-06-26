@@ -4,7 +4,7 @@ import pytz
 import traceback
 
 from config import KST_TIMEZONE
-from storage import load_state, append_daily_signal
+from storage import load_state, get_active_chat_id, append_daily_signal, get_active_chat_id
 from exchanges import get_bitget_price
 from scanner import scan_latest_closed_15m_oc
 from strategy import create_position, add_entry_if_needed, check_tp, check_sl_after_16, update_open_position_metrics
@@ -16,10 +16,19 @@ def now_kst_text():
     return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
 
 async def safe_send(bot, chat_id, text):
+    """
+    최신 /start 채팅방을 우선 사용.
+    TELEGRAM_CHAT_ID 환경변수가 틀려도 사용자가 /start를 누르면 자동 복구된다.
+    """
+    target_chat_id = get_active_chat_id(chat_id)
+    if not target_chat_id:
+        print("[TELEGRAM SEND SKIP] no chat_id available")
+        return
+
     try:
-        await bot.send_message(chat_id=chat_id, text=text)
+        await bot.send_message(chat_id=target_chat_id, text=text)
     except Exception as e:
-        print(f"[TELEGRAM SEND ERROR] {type(e).__name__}: {e}")
+        print(f"[TELEGRAM SEND ERROR] {type(e).__name__}: {e} / target={target_chat_id}")
 
 async def scheduler_alive_job(bot, chat_id):
     state = load_state()

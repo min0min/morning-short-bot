@@ -2,7 +2,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
 from config import TELEGRAM_BOT_TOKEN
-from storage import load_state, save_state, load_trades, calc_trade_stats
+from storage import load_state, save_state, load_trades, calc_trade_stats, set_active_chat_id
 from messages import (
     main_menu_text,
     status_message,
@@ -43,11 +43,14 @@ async def send_main_menu(update_or_query):
         await update_or_query.edit_message_text(main_menu_text(), reply_markup=main_keyboard())
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    set_active_chat_id(update.effective_chat.id)
     await send_main_menu(update)
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if query.message and query.message.chat_id:
+        set_active_chat_id(query.message.chat_id)
     data = query.data
     state = load_state()
 
@@ -180,6 +183,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("준비중입니다.", reply_markup=main_keyboard())
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat:
+        set_active_chat_id(update.effective_chat.id)
+
     if context.user_data.get(WAITING_BACKTEST_DATE):
         date_text = update.message.text.strip()
         try:

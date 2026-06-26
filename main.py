@@ -3,7 +3,7 @@ from datetime import datetime
 import pytz
 
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, PAPER_SEED_USDT, KST_TIMEZONE
-from storage import load_state, save_state
+from storage import load_state, save_state, get_active_chat_id
 from telegram_bot import build_app
 from scheduler import setup_scheduler
 
@@ -45,18 +45,26 @@ async def main():
 
     try:
         jobs_text = "\n".join([f"- {job.id}\n  next: {job.next_run_time}" for job in scheduler.get_jobs()])
-        await app.bot.send_message(
-            chat_id=TELEGRAM_CHAT_ID,
-            text=(
-                "🚀 [BOT STARTED]\n\n"
-                f"Server Time : {now_kst_text()}\n"
-                f"Timezone : {KST_TIMEZONE}\n"
-                f"Scheduler : ON\n\n"
-                f"등록된 Job:\n{jobs_text}"
+        startup_chat_id = get_active_chat_id(TELEGRAM_CHAT_ID)
+
+        if startup_chat_id:
+            await app.bot.send_message(
+                chat_id=startup_chat_id,
+                text=(
+                    "🚀 [BOT STARTED]\n\n"
+                    f"Server Time : {now_kst_text()}\n"
+                    f"Timezone : {KST_TIMEZONE}\n"
+                    f"Scheduler : ON\n\n"
+                    f"등록된 Job:\n{jobs_text}\n\n"
+                    "※ Chat ID 자동 저장 모드 ON\n"
+                    "/start를 누른 최신 채팅방으로 알림을 보냅니다."
+                )
             )
-        )
+        else:
+            print("[STARTUP MESSAGE SKIP] no TELEGRAM_CHAT_ID and no active_chat_id yet. Send /start to the bot.")
     except Exception as e:
         print(f"[STARTUP MESSAGE ERROR] {type(e).__name__}: {e}")
+        print("If this says Chat not found, send /start to the bot. The bot will auto-save the new chat_id.")
 
     try:
         while True:

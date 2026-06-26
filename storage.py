@@ -24,6 +24,7 @@ DEFAULT_STATE = {
     "seed_usdt": PAPER_SEED_USDT,
     "paper_balance": PAPER_SEED_USDT,
     "open_position": None,
+    "active_chat_id": None,
     "settings": {
         "entry_1_pct": DEFAULT_ENTRY_1_PCT,
         "entry_2_pct": DEFAULT_ENTRY_2_PCT,
@@ -161,3 +162,26 @@ def calc_trade_stats():
         "max_win_streak": max_win_streak,
         "max_loss_streak": max_loss_streak,
     }
+
+
+def set_active_chat_id(chat_id):
+    """
+    /start 또는 버튼 클릭 시 최신 Telegram chat_id를 state에 저장.
+    TELEGRAM_CHAT_ID 환경변수가 틀려도 이후 스케줄 알림은 이 값을 우선 사용한다.
+    """
+    state = load_state()
+    state["active_chat_id"] = str(chat_id)
+    save_state(state)
+    return state["active_chat_id"]
+
+def get_active_chat_id(default_chat_id=None):
+    """
+    저장된 최신 chat_id 우선, 없으면 환경변수 chat_id 사용.
+    """
+    state = load_state()
+    active = state.get("active_chat_id")
+    if active:
+        return str(active)
+    if default_chat_id:
+        return str(default_chat_id)
+    return None
