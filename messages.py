@@ -6,7 +6,6 @@ def main_menu_text():
 
 def entry_message(pos, signal):
     e = pos["entries"][0]
-
     candle_info = ""
     if signal.get("baseline_price") is not None:
         candle_info = (
@@ -203,7 +202,6 @@ def weekly_backtest_result_message(results, threshold):
 {lines}
 
 ※ 이 검증은 진입 종목 선정만 확인합니다."""
-
 
 def stats_message(stats):
     best = stats.get("best")

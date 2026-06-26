@@ -1,5 +1,6 @@
 import aiohttp
 import re
+import asyncio
 
 LAST_DEBUG = {
     "upbit_count": 0,
@@ -26,11 +27,19 @@ def normalize_base(symbol: str) -> str:
     s = re.sub(r"^\d+", "", s)  # 1000PEPE -> PEPE
     return s.strip()
 
-async def fetch_json(url, params=None):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params, timeout=15) as resp:
-            resp.raise_for_status()
-            return await resp.json()
+async def fetch_json(url, params=None, retries=3):
+    last_error = None
+    for attempt in range(retries):
+        try:
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, params=params) as resp:
+                    resp.raise_for_status()
+                    return await resp.json()
+        except Exception as e:
+            last_error = e
+            await asyncio.sleep(0.5 * (attempt + 1))
+    raise last_error
 
 async def get_upbit_krw_markets():
     data = await fetch_json("https://api.upbit.com/v1/market/all", {"isDetails": "false"})
@@ -137,144 +146,7 @@ async def get_crosslisted_futures_snapshot():
         LAST_DEBUG["error"] = f"{type(e).__name__}: {e}"
         raise
 
-def get_exchange_debug_text():
-    def samples(key):
-        arr = LAST_DEBUG.get(key) or []
-        return ", ".join(arr[:10]) if arr else "없음"
-
-    return f"""🧪 [거래소 디버그]
-
-업비트 KRW 종목 수 : {LAST_DEBUG.get('upbit_count')}
-빗썸 KRW 종목 수 : {LAST_DEBUG.get('bithumb_count')}
-비트겟 선물 계약 수 : {LAST_DEBUG.get('bitget_contract_count')}
-비트겟 티커 수 : {LAST_DEBUG.get('bitget_ticker_count')}
-
-업비트 ∩ 빗썸 : {LAST_DEBUG.get('cross_upbit_bithumb_count')}개
-업비트 ∩ 빗썸 ∩ 비트겟선물 : {LAST_DEBUG.get('cross_final_count')}개
-
-최종 교차 예시:
-{samples('cross_final_samples')}
-
-비트겟 계약 예시:
-{samples('bitget_contract_samples')}
-
-에러:
-{LAST_DEBUG.get('error') or '없음'}"""
-
-
-async def get_bitget_1m_candles(symbol, start_ms, end_ms):
-    """
-    Bitget USDT-FUTURES 1분봉 조회.
-    09:00~09:15 백테스트용.
-    반환: [{ts, open, high, low, close}]
-    """
-    endpoints = [
-        "https://api.bitget.com/api/v2/mix/market/candles",
-        "https://api.bitget.com/api/v2/mix/market/history-candles",
-    ]
-
-    last_error = None
-
-    for url in endpoints:
-        try:
-            data = await fetch_json(url, {
-                "symbol": symbol,
-                "productType": "USDT-FUTURES",
-                "granularity": "1m",
-                "startTime": str(int(start_ms)),
-                "endTime": str(int(end_ms)),
-                "limit": "100"
-            })
-
-            rows = data.get("data", [])
-            result = []
-
-            for row in rows:
-                # Bitget candles usually:
-                # [timestamp, open, high, low, close, baseVol, quoteVol]
-                try:
-                    result.append({
-                        "ts": int(row[0]),
-                        "open": float(row[1]),
-                        "high": float(row[2]),
-                        "low": float(row[3]),
-                        "close": float(row[4]),
-                    })
-                except Exception:
-                    continue
-
-            result.sort(key=lambda x: x["ts"])
-            if result:
-                return result
-
-        except Exception as e:
-            last_error = e
-            continue
-
-    if last_error:
-        raise last_error
-    return []
-
-
-async def get_bitget_15m_candles(symbol, start_ms, end_ms):
-    """
-    Bitget USDT-FUTURES 15분봉 조회.
-    날짜 백테스트 전용.
-    반환: [{ts, open, high, low, close}]
-    """
-    endpoints = [
-        "https://api.bitget.com/api/v2/mix/market/candles",
-        "https://api.bitget.com/api/v2/mix/market/history-candles",
-    ]
-
-    last_error = None
-
-    for url in endpoints:
-        try:
-            data = await fetch_json(url, {
-                "symbol": symbol,
-                "productType": "USDT-FUTURES",
-                "granularity": "15m",
-                "startTime": str(int(start_ms)),
-                "endTime": str(int(end_ms)),
-                "limit": "10"
-            })
-
-            rows = data.get("data", [])
-            result = []
-
-            for row in rows:
-                try:
-                    result.append({
-                        "ts": int(row[0]),
-                        "open": float(row[1]),
-                        "high": float(row[2]),
-                        "low": float(row[3]),
-                        "close": float(row[4]),
-                    })
-                except Exception:
-                    continue
-
-            result.sort(key=lambda x: x["ts"])
-            if result:
-                return result
-
-        except Exception as e:
-            last_error = e
-            continue
-
-    if last_error:
-        raise last_error
-    return []
-
-
-# ===== v2.1 closed 15m candle helpers =====
-
 async def get_bitget_15m_candles_wide(symbol, start_ms, end_ms):
-    """
-    Bitget USDT-FUTURES 15분봉을 넓은 범위로 조회.
-    반환: [{ts, open, high, low, close}]
-    """
     endpoints = [
         "https://api.bitget.com/api/v2/mix/market/history-candles",
         "https://api.bitget.com/api/v2/mix/market/candles",
@@ -321,11 +193,6 @@ async def get_bitget_15m_candles_wide(symbol, start_ms, end_ms):
     return []
 
 async def get_bitget_closed_15m_candle_by_open(symbol, target_open_ms):
-    """
-    특정 15분봉 open time 기준 캔들 선택.
-    예: KST 09:00 캔들 = 09:00~09:15 마감봉.
-    API 오차를 피하기 위해 앞뒤 45분 넓게 조회 후 정확한 ts를 찾는다.
-    """
     fifteen = 15 * 60 * 1000
     start_ms = int(target_open_ms) - 3 * fifteen
     end_ms = int(target_open_ms) + 4 * fifteen
@@ -334,17 +201,38 @@ async def get_bitget_closed_15m_candle_by_open(symbol, target_open_ms):
     if not candles:
         return None
 
-    # 1순위: 정확히 09:00 open timestamp
     for c in candles:
         if int(c["ts"]) == int(target_open_ms):
             return c
 
-    # 2순위: target_open_ms가 포함되는 15분 캔들
     for c in candles:
         ts = int(c["ts"])
         if ts <= int(target_open_ms) < ts + fifteen:
             return c
 
-    # 3순위: 가장 가까운 open timestamp
     candles.sort(key=lambda c: abs(int(c["ts"]) - int(target_open_ms)))
     return candles[0]
+
+def get_exchange_debug_text():
+    def samples(key):
+        arr = LAST_DEBUG.get(key) or []
+        return ", ".join(arr[:10]) if arr else "없음"
+
+    return f"""🧪 [거래소 디버그]
+
+업비트 KRW 종목 수 : {LAST_DEBUG.get('upbit_count')}
+빗썸 KRW 종목 수 : {LAST_DEBUG.get('bithumb_count')}
+비트겟 선물 계약 수 : {LAST_DEBUG.get('bitget_contract_count')}
+비트겟 티커 수 : {LAST_DEBUG.get('bitget_ticker_count')}
+
+업비트 ∩ 빗썸 : {LAST_DEBUG.get('cross_upbit_bithumb_count')}개
+업비트 ∩ 빗썸 ∩ 비트겟선물 : {LAST_DEBUG.get('cross_final_count')}개
+
+최종 교차 예시:
+{samples('cross_final_samples')}
+
+비트겟 계약 예시:
+{samples('bitget_contract_samples')}
+
+에러:
+{LAST_DEBUG.get('error') or '없음'}"""

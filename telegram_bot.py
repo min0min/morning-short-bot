@@ -101,7 +101,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "criteria":
         await query.edit_message_text(
-            "🎯 종목 선정 기준\n\n비트겟 선물 15분봉 기준\n09:00에 시작한 15분봉이 09:15에 마감\n마감봉 O→C 상승률 +3% 이상\n업비트 + 빗썸 교차상장 확인\n그중 상승률 1등 딱 1개만 PAPER 숏 진입",
+            "🎯 종목 선정 기준\n\n비트겟 선물 15분봉 기준\n09:00에 시작한 15분봉이 09:15에 마감\n마감봉 O→C 상승률 +3% 이상\n업비트 + 빗썸 교차상장 확인\n그중 상승률 1등 딱 1개만 PAPER 숏 진입\n\nTP: 레버리지 기준 +12%\nSL: 16:00 이후 레버리지 기준 -30%",
             reply_markup=main_keyboard()
         )
 

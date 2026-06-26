@@ -1,9 +1,16 @@
 import asyncio
+from datetime import datetime
+import pytz
 
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, PAPER_SEED_USDT
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, PAPER_SEED_USDT, KST_TIMEZONE
 from storage import load_state, save_state
 from telegram_bot import build_app
 from scheduler import setup_scheduler
+
+KST = pytz.timezone(KST_TIMEZONE)
+
+def now_kst_text():
+    return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
 
 def bootstrap_state():
     state = load_state()
@@ -14,20 +21,42 @@ def bootstrap_state():
 
 async def main():
     if not TELEGRAM_BOT_TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN이 비어있습니다. Railway Variables 또는 .env를 확인하세요.")
+        raise RuntimeError("TELEGRAM_BOT_TOKEN이 비어있습니다.")
     if not TELEGRAM_CHAT_ID:
-        raise RuntimeError("TELEGRAM_CHAT_ID가 비어있습니다. Railway Variables 또는 .env를 확인하세요.")
+        raise RuntimeError("TELEGRAM_CHAT_ID가 비어있습니다.")
 
     bootstrap_state()
 
     app = build_app()
-    setup_scheduler(app, TELEGRAM_CHAT_ID)
+    scheduler = setup_scheduler(app, TELEGRAM_CHAT_ID)
 
-    print("Morning Short Paper Bot v1.5 started.")
+    print("====================================")
+    print("Morning Short Paper Bot FINAL v3.0 started.")
+    print(f"Server Time KST: {now_kst_text()}")
+    print(f"Timezone: {KST_TIMEZONE}")
+    print(f"Scheduler running: {scheduler.running}")
+    for job in scheduler.get_jobs():
+        print(f"- {job.id} / next={job.next_run_time}")
+    print("====================================")
 
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
+
+    try:
+        jobs_text = "\n".join([f"- {job.id}\n  next: {job.next_run_time}" for job in scheduler.get_jobs()])
+        await app.bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=(
+                "🚀 [BOT STARTED]\n\n"
+                f"Server Time : {now_kst_text()}\n"
+                f"Timezone : {KST_TIMEZONE}\n"
+                f"Scheduler : ON\n\n"
+                f"등록된 Job:\n{jobs_text}"
+            )
+        )
+    except Exception as e:
+        print(f"[STARTUP MESSAGE ERROR] {type(e).__name__}: {e}")
 
     try:
         while True:

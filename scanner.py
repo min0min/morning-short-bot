@@ -7,10 +7,6 @@ from exchanges import get_crosslisted_futures_snapshot, get_bitget_closed_15m_ca
 KST = pytz.timezone("Asia/Seoul")
 
 def latest_closed_15m_open_ms(now=None):
-    """
-    현재 시각 기준 가장 최근에 마감된 15분봉의 open timestamp.
-    09:15에 실행되면 09:00 open 캔들을 선택.
-    """
     if now is None:
         now = datetime.now(KST)
     elif now.tzinfo is None:
@@ -20,20 +16,10 @@ def latest_closed_15m_open_ms(now=None):
 
     minute = (now.minute // 15) * 15
     boundary = now.replace(minute=minute, second=0, microsecond=0)
-
-    # 정확히 09:15에 실행되면 boundary=09:15, 직전 캔들 open=09:00
     target_open = boundary - timedelta(minutes=15)
     return int(target_open.timestamp() * 1000), target_open
 
-async def scan_latest_closed_15m_oc(threshold_pct=3.0):
-    """
-    실시간 자동 전략:
-    - 최근 마감된 15분봉 O→C 기준
-    - Bitget 선물 전 종목 중 업비트+빗썸 교차상장 필터
-    - +threshold 이상 후보 중 TOP1
-    """
-    target_open_ms, target_open_dt = latest_closed_15m_open_ms()
-
+async def scan_closed_15m_oc_by_open_ms(target_open_ms, threshold_pct=3.0):
     snapshot = await get_crosslisted_futures_snapshot()
     items = list(snapshot.values())
 
@@ -73,7 +59,7 @@ async def scan_latest_closed_15m_oc(threshold_pct=3.0):
                     "peak_price": h,
                     "low_price": l,
                     "candle_ts": candle["ts"],
-                    "peak_time": target_open_dt.strftime("%Y-%m-%d %H:%M KST"),
+                    "peak_time": None,
                 }
 
             except Exception:
@@ -90,9 +76,14 @@ async def scan_latest_closed_15m_oc(threshold_pct=3.0):
     signal = candidates[0] if candidates and candidates[0]["change_pct"] >= threshold_pct else None
 
     return {
-        "target_open": target_open_dt.strftime("%Y-%m-%d %H:%M KST"),
         "total_symbols": len(items),
         "errors": errors,
         "candidates": candidates,
         "signal": signal,
     }
+
+async def scan_latest_closed_15m_oc(threshold_pct=3.0):
+    target_open_ms, target_open_dt = latest_closed_15m_open_ms()
+    result = await scan_closed_15m_oc_by_open_ms(target_open_ms, threshold_pct)
+    result["target_open"] = target_open_dt.strftime("%Y-%m-%d %H:%M KST")
+    return result

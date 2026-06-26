@@ -1,91 +1,19 @@
-import asyncio
 from datetime import datetime, timedelta
 import pytz
 
-from exchanges import get_crosslisted_futures_snapshot, get_bitget_closed_15m_candle_by_open
+from scanner import scan_closed_15m_oc_by_open_ms
 
 KST = pytz.timezone("Asia/Seoul")
 
 def kst_0900_open_ms(date_text):
-    """
-    YYYY-MM-DD 기준 KST 09:00 15분봉 open timestamp(ms).
-    알림봇 기준:
-    09:00에 시작한 15분봉이 09:15에 마감됨.
-    """
     dt = KST.localize(datetime.strptime(date_text + " 09:00:00", "%Y-%m-%d %H:%M:%S"))
     return int(dt.timestamp() * 1000)
 
 async def run_date_backtest(date_text, threshold_pct=3.0):
-    """
-    알림봇과 동일한 기준:
-    - Bitget USDT 선물 15분봉
-    - KST 09:00에 시작해서 09:15에 마감된 캔들
-    - 상승률 = (Close - Open) / Open * 100
-    - 업비트 + 빗썸 교차상장 + Bitget 선물 가능 종목만 대상
-    """
     target_open_ms = kst_0900_open_ms(date_text)
-
-    snapshot = await get_crosslisted_futures_snapshot()
-    items = list(snapshot.values())
-
-    sem = asyncio.Semaphore(15)
-    candidates = []
-    errors = 0
-
-    async def one(item):
-        nonlocal errors
-        async with sem:
-            try:
-                candle = await get_bitget_closed_15m_candle_by_open(item["symbol"], target_open_ms)
-                if not candle:
-                    errors += 1
-                    return None
-
-                o = float(candle["open"])
-                h = float(candle["high"])
-                l = float(candle["low"])
-                c = float(candle["close"])
-
-                if o <= 0:
-                    errors += 1
-                    return None
-
-                oc_pct = ((c - o) / o) * 100
-                high_pct = ((h - o) / o) * 100
-
-                return {
-                    "base": item["base"],
-                    "symbol": item["symbol"],
-                    "change_pct": oc_pct,       # 최종 선정 기준: O→C
-                    "last_change_pct": oc_pct,
-                    "peak_change_pct": high_pct,
-                    "price": c,
-                    "baseline_price": o,
-                    "peak_price": h,
-                    "low_price": l,
-                    "candle_ts": candle["ts"],
-                    "peak_time": "KST 09:00~09:15 closed 15m candle",
-                }
-
-            except Exception:
-                errors += 1
-                return None
-
-    rows = await asyncio.gather(*(one(item) for item in items))
-
-    for row in rows:
-        if row:
-            candidates.append(row)
-
-    candidates.sort(key=lambda x: x["change_pct"], reverse=True)
-
-    return {
-        "date": date_text,
-        "total_symbols": len(items),
-        "errors": errors,
-        "candidates": candidates,
-        "signal": candidates[0] if candidates and candidates[0]["change_pct"] >= threshold_pct else None,
-    }
+    result = await scan_closed_15m_oc_by_open_ms(target_open_ms, threshold_pct)
+    result["date"] = date_text
+    return result
 
 def last_n_dates(n=7, end_date_text=None):
     if end_date_text:
@@ -102,6 +30,7 @@ async def run_recent_days_backtest(days=7, threshold_pct=3.0, end_date_text=None
     for d in dates:
         try:
             r = await run_date_backtest(d, threshold_pct)
+            r["date"] = d
             results.append(r)
         except Exception as e:
             results.append({
