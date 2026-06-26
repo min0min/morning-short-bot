@@ -17,18 +17,19 @@ def now_kst_text():
 
 async def safe_send(bot, chat_id, text):
     """
-    최신 /start 채팅방을 우선 사용.
-    TELEGRAM_CHAT_ID 환경변수가 틀려도 사용자가 /start를 누르면 자동 복구된다.
+    스케줄 알림은 state.json에 저장된 active_chat_id만 사용.
+    TELEGRAM_CHAT_ID 환경변수는 사용하지 않는다.
+    /start를 한 번 누르면 active_chat_id가 저장된다.
     """
-    target_chat_id = get_active_chat_id(chat_id)
+    target_chat_id = get_active_chat_id()
     if not target_chat_id:
-        print("[TELEGRAM SEND SKIP] no chat_id available")
+        print("[TELEGRAM SEND SKIP] active_chat_id is empty. Send /start to the bot first.")
         return
 
     try:
         await bot.send_message(chat_id=target_chat_id, text=text)
     except Exception as e:
-        print(f"[TELEGRAM SEND ERROR] {type(e).__name__}: {e} / target={target_chat_id}")
+        print(f"[TELEGRAM SEND ERROR] {type(e).__name__}: {e} / active_chat_id={target_chat_id}")
 
 async def scheduler_alive_job(bot, chat_id):
     state = load_state()

@@ -22,8 +22,6 @@ def bootstrap_state():
 async def main():
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN이 비어있습니다.")
-    if not TELEGRAM_CHAT_ID:
-        raise RuntimeError("TELEGRAM_CHAT_ID가 비어있습니다.")
 
     bootstrap_state()
 
@@ -31,7 +29,7 @@ async def main():
     scheduler = setup_scheduler(app, TELEGRAM_CHAT_ID)
 
     print("====================================")
-    print("Morning Short Paper Bot FINAL v3.0 started.")
+    print("Morning Short Paper Bot FINAL v3.2 started.")
     print(f"Server Time KST: {now_kst_text()}")
     print(f"Timezone: {KST_TIMEZONE}")
     print(f"Scheduler running: {scheduler.running}")
@@ -45,7 +43,7 @@ async def main():
 
     try:
         jobs_text = "\n".join([f"- {job.id}\n  next: {job.next_run_time}" for job in scheduler.get_jobs()])
-        startup_chat_id = get_active_chat_id(TELEGRAM_CHAT_ID)
+        startup_chat_id = get_active_chat_id()
 
         if startup_chat_id:
             await app.bot.send_message(
@@ -56,15 +54,14 @@ async def main():
                     f"Timezone : {KST_TIMEZONE}\n"
                     f"Scheduler : ON\n\n"
                     f"등록된 Job:\n{jobs_text}\n\n"
-                    "※ Chat ID 자동 저장 모드 ON\n"
-                    "/start를 누른 최신 채팅방으로 알림을 보냅니다."
+                    "※ 알림 전송 기준: state.json active_chat_id"
                 )
             )
         else:
-            print("[STARTUP MESSAGE SKIP] no TELEGRAM_CHAT_ID and no active_chat_id yet. Send /start to the bot.")
+            print("[STARTUP MESSAGE SKIP] active_chat_id is empty. Send /start to save chat_id.")
     except Exception as e:
         print(f"[STARTUP MESSAGE ERROR] {type(e).__name__}: {e}")
-        print("If this says Chat not found, send /start to the bot. The bot will auto-save the new chat_id.")
+        print("Startup message failed, but scheduler is still running. Send /start to refresh active_chat_id.")
 
     try:
         while True:
