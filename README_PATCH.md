@@ -1,21 +1,15 @@
-# v3.2 State Chat ID Only Patch
+# v3.1 Delayed Scan + Retry Fix
 
 덮어쓸 파일:
-- storage.py
-- telegram_bot.py
 - scheduler.py
-- main.py
+- telegram_bot.py
 
-핵심 변경:
-- /start를 한 번이라도 누르면 해당 chat_id를 state.json에 저장
-- 버튼 클릭/텍스트 입력 때도 chat_id 자동 갱신
-- 이후 모든 스케줄 알림은 state.json의 active_chat_id만 사용
-- TELEGRAM_CHAT_ID 환경변수로 메시지 보내지 않음
-- Chat not found 방지 강화
-
-적용 후:
-1. 덮어쓰기
-2. Redeploy
-3. 텔레그램에서 /start
-4. 모의 시작 ON 확인
-5. Railway 로그에 [CHAT ID SAVED]가 뜨는지 확인
+수정:
+- 09:15:00 정각 스캔은 Bitget 마감봉 반영이 늦으면 신호를 못 잡을 수 있어서
+  09:15:20으로 지연
+- 09:16:10 자동 재시도 추가
+- 09:17:10 최종 재시도 추가
+- 각 재시도마다 TOP20 브리핑 출력
+- 신호가 나오면 즉시 PAPER 포지션 생성
+- 이미 포지션이 있으면 중복 진입 방지
+- 날짜 백테스트는 실제 포지션을 만들지 않는다는 문구 명확화
