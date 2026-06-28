@@ -231,3 +231,50 @@ def stats_message(stats):
 
 최고 거래 : {best_text}
 최악 거래 : {worst_text}"""
+
+
+def position_report_message(pos, current_price):
+    """
+    오픈 포지션 15분 단위 리포트.
+    SHORT 기준이며, strategy.update_open_position_metrics 이후의 pos를 받는 것을 권장.
+    """
+    signal = pos.get("signal", {})
+    entries = pos.get("entries", [])
+
+    entry_lines = ""
+    for e in entries:
+        entry_lines += f"{e.get('level')}차: {e.get('price')} / 증거금 {fmt_usdt(e.get('margin', 0))}\n"
+
+    last_pnl = float(pos.get("last_pnl_pct", 0))
+    max_pnl = float(pos.get("max_pnl_pct", 0))
+    min_pnl = float(pos.get("min_pnl_pct", 0))
+
+    status_emoji = "🟢" if last_pnl > 0 else ("🔴" if last_pnl < 0 else "⚪")
+
+    return f"""{status_emoji} [15분 포지션 리포트]
+
+종목 : {pos.get('base')}
+심볼 : {pos.get('symbol')}
+방향 : SHORT
+
+현재가 : {current_price}
+평균 진입가 : {pos.get('avg_price'):.8f}
+
+현재 수익률 : {last_pnl:.2f}%
+최대 유리 : {max_pnl:.2f}% @ {pos.get('max_pnl_price', '-')}
+최대 불리 : {min_pnl:.2f}% @ {pos.get('min_pnl_price', '-')}
+
+진입 차수 : {len(entries)}차
+총 증거금 : {fmt_usdt(pos.get('total_margin', 0))}
+총 포지션 : {fmt_usdt(pos.get('total_notional', 0))}
+
+진입 내역:
+{entry_lines}
+TP 기준 : 레버리지 기준 +12%
+SL 체크 : 16:00 이후 레버리지 기준 -30%
+
+진입 신호:
+O→C +{signal.get('change_pct', 0):.2f}%
+H참고 +{signal.get('peak_change_pct', 0):.2f}%
+
+상태 : PAPER MODE"""
