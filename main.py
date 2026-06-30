@@ -3,7 +3,7 @@ from datetime import datetime
 import pytz
 
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, PAPER_SEED_USDT, KST_TIMEZONE, BOT_VERSION
-from storage import load_state, save_state
+from storage import load_state, save_state, load_active_chat_id
 from telegram_bot import build_app
 from scheduler import setup_scheduler
 
@@ -22,8 +22,6 @@ def bootstrap_state():
 async def main():
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN이 비어있습니다.")
-    if not TELEGRAM_CHAT_ID:
-        raise RuntimeError("TELEGRAM_CHAT_ID가 비어있습니다.")
 
     bootstrap_state()
 
@@ -43,18 +41,25 @@ async def main():
     await app.start()
     await app.updater.start_polling()
 
+    # Startup message: active_chat_id가 있을 때만 전송. 없으면 에러 없이 스킵.
     try:
-        jobs_text = "\n".join([f"- {job.id}\n  next: {job.next_run_time}" for job in scheduler.get_jobs()])
-        await app.bot.send_message(
-            chat_id=TELEGRAM_CHAT_ID,
-            text=(
-                f"🚀 [BOT STARTED]\n\nVersion : {BOT_VERSION}\n"
-                f"Server Time : {now_kst_text()}\n"
-                f"Timezone : {KST_TIMEZONE}\n"
-                f"Scheduler : ON\n\n"
-                f"등록된 Job:\n{jobs_text}"
+        active_chat_id = load_active_chat_id()
+        if active_chat_id:
+            jobs_text = "\n".join([f"- {job.id}\n  next: {job.next_run_time}" for job in scheduler.get_jobs()])
+            await app.bot.send_message(
+                chat_id=active_chat_id,
+                text=(
+                    f"🚀 [BOT STARTED]\n\n"
+                    f"Version : {BOT_VERSION}\n"
+                    f"Server Time : {now_kst_text()}\n"
+                    f"Timezone : {KST_TIMEZONE}\n"
+                    f"Scheduler : ON\n\n"
+                    f"등록된 Job:\n{jobs_text}"
+                )
             )
-        )
+            print(f"[STARTUP MESSAGE SENT] active_chat_id={active_chat_id}")
+        else:
+            print("[STARTUP MESSAGE SKIP] active_chat_id is empty. Send /start to save chat_id.")
     except Exception as e:
         print(f"[STARTUP MESSAGE ERROR] {type(e).__name__}: {e}")
 

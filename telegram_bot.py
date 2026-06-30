@@ -1,7 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
-from config import TELEGRAM_BOT_TOKEN, BOT_VERSION
+from config import TELEGRAM_BOT_TOKEN, BOT_VERSION, BOT_VERSION
 from storage import load_state, save_state, load_trades, calc_trade_stats, save_active_chat_id
 from messages import (
     main_menu_text,

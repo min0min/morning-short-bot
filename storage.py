@@ -193,3 +193,28 @@ def load_active_chat_id():
     except Exception as e:
         print(f"[CHAT ID LOAD ERROR] {type(e).__name__}: {e}")
         return None
+
+
+def get_active_chat_debug():
+    ensure_data_dir()
+    if not os.path.exists(ACTIVE_CHAT_PATH):
+        return {
+            "exists": False,
+            "chat_id": None,
+            "updated_at": None,
+        }
+    try:
+        with open(ACTIVE_CHAT_PATH, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return {
+            "exists": True,
+            "chat_id": payload.get("chat_id"),
+            "updated_at": payload.get("updated_at"),
+        }
+    except Exception as e:
+        return {
+            "exists": False,
+            "chat_id": None,
+            "updated_at": None,
+            "error": f"{type(e).__name__}: {e}",
+        }
