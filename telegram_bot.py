@@ -1,8 +1,8 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
-from config import TELEGRAM_BOT_TOKEN
-from storage import load_state, save_state, load_trades, calc_trade_stats
+from config import TELEGRAM_BOT_TOKEN, BOT_VERSION
+from storage import load_state, save_state, load_trades, calc_trade_stats, save_active_chat_id
 from messages import (
     main_menu_text,
     status_message,
@@ -43,12 +43,19 @@ async def send_main_menu(update_or_query):
         await update_or_query.edit_message_text(main_menu_text(), reply_markup=main_keyboard())
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    save_active_chat_id(chat_id)
+    await update.message.reply_text(
+        f"✅ CHAT ID 저장 완료\n현재 chat_id: {chat_id}\n버전: {BOT_VERSION}"
+    )
     await send_main_menu(update)
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    if update.effective_chat:
+        save_active_chat_id(update.effective_chat.id)
     state = load_state()
 
     if data == "seed":
@@ -110,7 +117,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             threshold = state["settings"]["pump_threshold_pct"]
             result = await scan_latest_closed_15m_oc(threshold)
             msg = scan_result_message(
-                (result.get("top20") or result["candidates"][:20]),
+                result["candidates"],
                 threshold,
                 signal=result["signal"],
                 total_symbols=result["total_symbols"],
@@ -172,7 +179,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "notice":
         await query.edit_message_text(
-            "📢 안내사항\n\n이 봇은 실주문을 넣지 않는 모의투자 봇입니다.\n실제 돈이 움직이지 않습니다.\n\n기준: 비트겟 선물 마감 15분봉 O→C +3% 이상, 업비트+빗썸 교차상장, 1등만 PAPER 숏 진입.",
+            "📢 안내사항\n\n버전: {BOT_VERSION}\n\n이 봇은 실주문을 넣지 않는 모의투자 봇입니다.\n실제 돈이 움직이지 않습니다.\n\n기준: 비트겟 선물 마감 15분봉 O→C +3% 이상, 업비트+빗썸 교차상장, 1등만 PAPER 숏 진입.",
             reply_markup=main_keyboard()
         )
 
@@ -180,6 +187,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("준비중입니다.", reply_markup=main_keyboard())
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat:
+        save_active_chat_id(update.effective_chat.id)
     if context.user_data.get(WAITING_BACKTEST_DATE):
         date_text = update.message.text.strip()
         try:
@@ -196,7 +205,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             result = await run_date_backtest(date_text, threshold)
             msg = backtest_result_message(
                 date_text,
-                (result.get("top20") or result["candidates"][:20]),
+                result["candidates"],
                 threshold,
                 result["total_symbols"],
                 result["errors"],

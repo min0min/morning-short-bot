@@ -4,7 +4,7 @@ import pytz
 import traceback
 
 from config import KST_TIMEZONE
-from storage import load_state, append_daily_signal
+from storage import load_state, append_daily_signal, load_active_chat_id
 from exchanges import get_bitget_price
 from scanner import scan_latest_closed_15m_oc
 from strategy import create_position, add_entry_if_needed, check_tp, check_sl_after_16, update_open_position_metrics
@@ -15,11 +15,24 @@ KST = pytz.timezone(KST_TIMEZONE)
 def now_kst_text():
     return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
 
+def resolve_chat_id(default_chat_id):
+    """
+    /start로 저장된 active_chat_id를 최우선 사용.
+    없으면 Railway Variables의 TELEGRAM_CHAT_ID 사용.
+    """
+    active = load_active_chat_id()
+    return active or default_chat_id
+
 async def safe_send(bot, chat_id, text):
+    target_chat_id = resolve_chat_id(chat_id)
+    if not target_chat_id:
+        print("[TELEGRAM SEND SKIP] no chat_id. Send /start first.")
+        return
+
     try:
-        await bot.send_message(chat_id=chat_id, text=text)
+        await bot.send_message(chat_id=target_chat_id, text=text)
     except Exception as e:
-        print(f"[TELEGRAM SEND ERROR] {type(e).__name__}: {e}")
+        print(f"[TELEGRAM SEND ERROR] {type(e).__name__}: {e} target_chat_id={target_chat_id}")
 
 async def scheduler_alive_job(bot, chat_id):
     state = load_state()
@@ -27,9 +40,9 @@ async def scheduler_alive_job(bot, chat_id):
     await safe_send(
         bot,
         chat_id,
-        "🟢 [SCHEDULER ALIVE]\n\n"
-        f"시간 : {now_kst_text()}\n"
-        f"모의 실행 : {'ON' if state.get('running') else 'OFF'}\n\n"
+        "🟢 [SCHEDULER ALIVE]\\n\\n"
+        f"시간 : {now_kst_text()}\\n"
+        f"모의 실행 : {'ON' if state.get('running') else 'OFF'}\\n\\n"
         "09:15 마감 15분봉 스캔 대기중"
     )
 
@@ -39,10 +52,10 @@ async def scan_ready_job(bot, chat_id):
     await safe_send(
         bot,
         chat_id,
-        "🟡 [SCAN READY]\n\n"
-        f"시간 : {now_kst_text()}\n"
-        f"모의 실행 : {'ON' if state.get('running') else 'OFF'}\n\n"
-        "09:15 마감봉 확정 후 20초 뒤 스캔합니다.\n"
+        "🟡 [SCAN READY]\\n\\n"
+        f"시간 : {now_kst_text()}\\n"
+        f"모의 실행 : {'ON' if state.get('running') else 'OFF'}\\n\\n"
+        "09:15 마감봉 확정 후 20초 뒤 스캔합니다.\\n"
         "캔들 반영 지연 가능성 때문에 09:16, 09:17에 자동 재시도합니다."
     )
 
@@ -56,19 +69,19 @@ async def closed_15m_scan_job(bot, chat_id, attempt="PRIMARY"):
         await safe_send(
             bot,
             chat_id,
-            f"🟢 [09:15 SCAN START / {attempt}]\n\n"
-            f"시간 : {now_kst_text()}\n"
+            f"🟢 [09:15 SCAN START / {attempt}]\\n\\n"
+            f"시간 : {now_kst_text()}\\n"
             "실시간/백테스트 통합 함수로 마감 15분봉 O→C 스캔을 시작합니다."
         )
 
         if not state.get("running"):
             print("[SCAN SKIP] paper mode off")
-            await safe_send(bot, chat_id, f"⏸ [09:15 SCAN SKIP / {attempt}]\n\n모의 실행 OFF 상태라 스캔을 건너뜁니다.")
+            await safe_send(bot, chat_id, f"⏸ [09:15 SCAN SKIP / {attempt}]\\n\\n모의 실행 OFF 상태라 스캔을 건너뜁니다.")
             return
 
         if state.get("open_position"):
             print("[SCAN SKIP] open position exists")
-            await safe_send(bot, chat_id, f"⚠️ [09:15 SCAN SKIP / {attempt}]\n\n이미 오픈 포지션이 있어서 신규 진입을 막았습니다.")
+            await safe_send(bot, chat_id, f"⚠️ [09:15 SCAN SKIP / {attempt}]\\n\\n이미 오픈 포지션이 있어서 신규 진입을 막았습니다.")
             return
 
         threshold = state["settings"]["pump_threshold_pct"]
@@ -121,15 +134,15 @@ async def closed_15m_scan_job(bot, chat_id, attempt="PRIMARY"):
                 await safe_send(
                     bot,
                     chat_id,
-                    f"🟠 [NO ENTRY / {attempt}]\n\n"
-                    f"통과 후보: {len(passed)}개\n"
+                    f"🟠 [NO ENTRY / {attempt}]\\n\\n"
+                    f"통과 후보: {len(passed)}개\\n"
                     "다음 재시도에서 다시 확인합니다."
                 )
             else:
                 await safe_send(
                     bot,
                     chat_id,
-                    "📭 [FINAL NO ENTRY]\n\n"
+                    "📭 [FINAL NO ENTRY]\\n\\n"
                     "최종 재시도까지 완료했지만 진입 조건 충족 종목이 없습니다."
                 )
             return
@@ -137,7 +150,7 @@ async def closed_15m_scan_job(bot, chat_id, attempt="PRIMARY"):
         latest_state = load_state()
         if latest_state.get("open_position"):
             print("[ENTRY SKIP] open position appeared before entry")
-            await safe_send(bot, chat_id, "⚠️ [ENTRY SKIP]\n\n이미 오픈 포지션이 생겨 중복 진입을 막았습니다.")
+            await safe_send(bot, chat_id, "⚠️ [ENTRY SKIP]\\n\\n이미 오픈 포지션이 생겨 중복 진입을 막았습니다.")
             return
 
         pos = create_position(signal, reason=f"CLOSED_15M_OC_TOP1_{attempt}")
@@ -150,7 +163,7 @@ async def closed_15m_scan_job(bot, chat_id, attempt="PRIMARY"):
         await safe_send(
             bot,
             chat_id,
-            f"❌ [09:15 SCAN ERROR / {attempt}]\n\n{type(e).__name__}: {e}\n\nRailway 로그를 확인하세요."
+            f"❌ [09:15 SCAN ERROR / {attempt}]\\n\\n{type(e).__name__}: {e}\\n\\nRailway 로그를 확인하세요."
         )
 
 async def position_watch_job(bot, chat_id):
@@ -204,11 +217,11 @@ async def sl_check_job(bot, chat_id):
             print(f"[SL CLOSE] {closed_pos['base']} pnl={closed_pos.get('pnl_pct')}")
             await safe_send(bot, chat_id, close_message(closed_pos, balance))
         else:
-            await safe_send(bot, chat_id, "🕓 [16:00 SL CHECK]\n\n-30% 이하 손실 아님 → 홀딩 유지")
+            await safe_send(bot, chat_id, "🕓 [16:00 SL CHECK]\\n\\n-30% 이하 손실 아님 → 홀딩 유지")
 
     except Exception as e:
         print(f"[SL CHECK ERROR] {type(e).__name__}: {e}")
-        await safe_send(bot, chat_id, f"❌ [16:00 SL CHECK ERROR]\n\n{type(e).__name__}: {e}")
+        await safe_send(bot, chat_id, f"❌ [16:00 SL CHECK ERROR]\\n\\n{type(e).__name__}: {e}")
 
 def setup_scheduler(app, chat_id):
     timezone = pytz.timezone(KST_TIMEZONE)

@@ -18,13 +18,13 @@ DATA_DIR = "data"
 STATE_PATH = os.path.join(DATA_DIR, "state.json")
 TRADES_PATH = os.path.join(DATA_DIR, "trades.json")
 DAILY_SIGNALS_PATH = os.path.join(DATA_DIR, "daily_signals.json")
+ACTIVE_CHAT_PATH = os.path.join(DATA_DIR, "active_chat.json")
 
 DEFAULT_STATE = {
     "running": False,
     "seed_usdt": PAPER_SEED_USDT,
     "paper_balance": PAPER_SEED_USDT,
     "open_position": None,
-    "active_chat_id": None,
     "settings": {
         "entry_1_pct": DEFAULT_ENTRY_1_PCT,
         "entry_2_pct": DEFAULT_ENTRY_2_PCT,
@@ -54,11 +54,9 @@ def load_state():
         if k not in state:
             state[k] = v
             changed = True
-
     if "settings" not in state or not isinstance(state["settings"], dict):
         state["settings"] = DEFAULT_STATE["settings"].copy()
         changed = True
-
     for k, v in DEFAULT_STATE["settings"].items():
         if k not in state["settings"]:
             state["settings"][k] = v
@@ -74,17 +72,6 @@ def save_state(state):
     state["updated_at"] = datetime.now().isoformat()
     with open(STATE_PATH, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
-
-def set_active_chat_id(chat_id):
-    state = load_state()
-    state["active_chat_id"] = str(chat_id)
-    save_state(state)
-    return state["active_chat_id"]
-
-def get_active_chat_id():
-    state = load_state()
-    active = state.get("active_chat_id")
-    return str(active) if active else None
 
 def load_trades():
     ensure_data_dir()
@@ -175,3 +162,34 @@ def calc_trade_stats():
         "max_win_streak": max_win_streak,
         "max_loss_streak": max_loss_streak,
     }
+
+
+def save_active_chat_id(chat_id):
+    """
+    /start를 누른 현재 텔레그램 chat_id를 저장.
+    스케줄러 알림은 env TELEGRAM_CHAT_ID보다 이 값을 우선 사용한다.
+    """
+    ensure_data_dir()
+    payload = {
+        "chat_id": str(chat_id),
+        "updated_at": datetime.now().isoformat(),
+    }
+    with open(ACTIVE_CHAT_PATH, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    print(f"[CHAT ID SAVED] active_chat_id={chat_id}")
+    return payload
+
+def load_active_chat_id():
+    """
+    저장된 active chat_id 반환. 없으면 None.
+    """
+    ensure_data_dir()
+    if not os.path.exists(ACTIVE_CHAT_PATH):
+        return None
+    try:
+        with open(ACTIVE_CHAT_PATH, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload.get("chat_id")
+    except Exception as e:
+        print(f"[CHAT ID LOAD ERROR] {type(e).__name__}: {e}")
+        return None
