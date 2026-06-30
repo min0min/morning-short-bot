@@ -2,7 +2,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
 from config import TELEGRAM_BOT_TOKEN
-from storage import load_state, save_state, load_trades, calc_trade_stats, set_active_chat_id
+from storage import load_state, save_state, load_trades, calc_trade_stats
 from messages import (
     main_menu_text,
     status_message,
@@ -19,11 +19,6 @@ from scanner import scan_latest_closed_15m_oc
 
 WAITING_SEED = "waiting_seed"
 WAITING_BACKTEST_DATE = "waiting_backtest_date"
-
-def remember_chat_id(chat_id):
-    saved = set_active_chat_id(chat_id)
-    print(f"[CHAT ID SAVED] active_chat_id={saved}")
-    return saved
 
 def main_keyboard():
     rows = [
@@ -48,16 +43,11 @@ async def send_main_menu(update_or_query):
         await update_or_query.edit_message_text(main_menu_text(), reply_markup=main_keyboard())
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat:
-        remember_chat_id(update.effective_chat.id)
     await send_main_menu(update)
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    if query.message:
-        remember_chat_id(query.message.chat_id)
-
     data = query.data
     state = load_state()
 
@@ -105,7 +95,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "settings":
         s = state["settings"]
         await query.edit_message_text(
-            f"⚙️ 비율·익절 설정\n\n1차 : {s['entry_1_pct']*100:.1f}%\n2차 : {s['entry_2_pct']*100:.1f}%\n3차 : {s['entry_3_pct']*100:.1f}%\n레버리지 : {s['leverage']}배\n추가진입 간격 : +{s['add_entry_price_move_pct']}%\n익절 : +{s['tp_leveraged_pct']}%\n16시 손절 : {s['sl_leveraged_pct']}",
+            f"⚙️ 비율·익절 설정\n\n1차 : {s['entry_1_pct']*100:.1f}%\n2차 : {s['entry_2_pct']*100:.1f}%\n3차 : {s['entry_3_pct']*100:.1f}%\n레버리지 : {s['leverage']}배\n추가진입 간격 : +{s['add_entry_price_move_pct']}%\n익절 : +{s['tp_leveraged_pct']}%\n16시 손절 : {s['sl_leveraged_pct']}%",
             reply_markup=main_keyboard()
         )
 
@@ -120,7 +110,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             threshold = state["settings"]["pump_threshold_pct"]
             result = await scan_latest_closed_15m_oc(threshold)
             msg = scan_result_message(
-                result["candidates"],
+                (result.get("top20") or result["candidates"][:20]),
                 threshold,
                 signal=result["signal"],
                 total_symbols=result["total_symbols"],
@@ -153,9 +143,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🧪 최근 7일 자동 검증 실행중...\n\nKST 09:00~09:15 마감 15분봉 O→C 기준으로 계산합니다.\n종목 수가 많아서 1~3분 정도 걸릴 수 있습니다.",
                 reply_markup=main_keyboard()
             )
+
             results = await run_recent_days_backtest(7, threshold)
             msg = weekly_backtest_result_message(results, threshold)
             await query.message.reply_text(msg, reply_markup=main_keyboard())
+
         except Exception as e:
             await query.message.reply_text(
                 f"❌ 최근 7일 자동 검증 실패\n\n{type(e).__name__}: {e}",
@@ -180,7 +172,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "notice":
         await query.edit_message_text(
-            "📢 안내사항\n\n이 봇은 실주문을 넣지 않는 모의투자 봇입니다.\n실제 돈이 움직이지 않습니다.\n\n기준: 비트겟 선물 마감 15분봉 O→C +3% 이상, 업비트+빗썸 교차상장, 1등만 PAPER 숏 진입.\n\n/start를 누른 채팅방을 자동 저장하고, 이후 모든 스케줄 알림은 그 채팅방으로 전송됩니다.",
+            "📢 안내사항\n\n이 봇은 실주문을 넣지 않는 모의투자 봇입니다.\n실제 돈이 움직이지 않습니다.\n\n기준: 비트겟 선물 마감 15분봉 O→C +3% 이상, 업비트+빗썸 교차상장, 1등만 PAPER 숏 진입.",
             reply_markup=main_keyboard()
         )
 
@@ -188,16 +180,13 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("준비중입니다.", reply_markup=main_keyboard())
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat:
-        remember_chat_id(update.effective_chat.id)
-
     if context.user_data.get(WAITING_BACKTEST_DATE):
         date_text = update.message.text.strip()
         try:
             from datetime import datetime
             datetime.strptime(date_text, "%Y-%m-%d")
-            context.user_data[WAITING_BACKTEST_DATE] = False
 
+            context.user_data[WAITING_BACKTEST_DATE] = False
             await update.message.reply_text(
                 f"🧪 날짜 백테스트 실행중...\n\n날짜 : {date_text}\n구간 : 09:00~09:15 KST 마감 15분봉 O→C\n\n종목 수가 많아서 10~60초 정도 걸릴 수 있습니다."
             )
@@ -207,7 +196,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             result = await run_date_backtest(date_text, threshold)
             msg = backtest_result_message(
                 date_text,
-                result["candidates"],
+                (result.get("top20") or result["candidates"][:20]),
                 threshold,
                 result["total_symbols"],
                 result["errors"],

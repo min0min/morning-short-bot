@@ -1,19 +1,15 @@
-# v3.2 Realtime 15m Position Report Patch
+# v3.3 Realtime/Backtest Unified Signal Fix
 
 덮어쓸 파일:
+- scanner.py
+- backtest.py
 - scheduler.py
-- messages.py
+- telegram_bot.py
 
-추가:
-- 오픈 포지션이 있을 때만 15분 단위 리포트 전송
-- 매시 00/15/30/45분 + 5초에 리포트
-- 현재가, 평균가, 현재 수익률
-- 최대 유리/최대 불리
-- 진입 차수, 총 증거금, 총 포지션
-- TP/SL 기준
-- 진입 신호 O→C/H참고 표시
-
-기존 유지:
-- 30초마다 TP/추가진입 감시
-- 16:00 SL 체크
-- 09:15 스캔/재시도 구조
+핵심 수정:
+- 실시간 스캔과 날짜 백테스트가 같은 select_signal_by_closed_15m() 함수만 사용
+- 백테스트에서는 진입 종목이 나오는데 실시간에서는 signal=None 뜨는 불일치 방지
+- 09:15:20 / 09:16:10 / 09:17:10 재시도 유지
+- 스캔 로그에 passed_count, TOP1, SIGNAL 출력
+- TOP20 브리핑은 top20만 출력하지만 signal은 전체 후보에서 선정
+- ENTRY 직전 open_position 재확인으로 중복 진입 방지

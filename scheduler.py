@@ -8,7 +8,7 @@ from storage import load_state, append_daily_signal
 from exchanges import get_bitget_price
 from scanner import scan_latest_closed_15m_oc
 from strategy import create_position, add_entry_if_needed, check_tp, check_sl_after_16, update_open_position_metrics
-from messages import entry_message, add_message, close_message, scan_result_message, position_report_message
+from messages import entry_message, add_message, close_message, scan_result_message
 
 KST = pytz.timezone(KST_TIMEZONE)
 
@@ -42,73 +42,106 @@ async def scan_ready_job(bot, chat_id):
         "🟡 [SCAN READY]\n\n"
         f"시간 : {now_kst_text()}\n"
         f"모의 실행 : {'ON' if state.get('running') else 'OFF'}\n\n"
-        "곧 09:15 마감 15분봉 O→C 스캔을 시작합니다."
+        "09:15 마감봉 확정 후 20초 뒤 스캔합니다.\n"
+        "캔들 반영 지연 가능성 때문에 09:16, 09:17에 자동 재시도합니다."
     )
 
-async def closed_15m_scan_job(bot, chat_id):
-    print(f"[JOB START] closed_15m_scan_job {now_kst_text()}")
+async def closed_15m_scan_job(bot, chat_id, attempt="PRIMARY"):
+    print(f"[JOB START] closed_15m_scan_job {attempt} {now_kst_text()}")
 
     try:
         state = load_state()
-        print(f"[STATE] running={state.get('running')} open_position={bool(state.get('open_position'))}")
+        print(f"[STATE] attempt={attempt} running={state.get('running')} open_position={bool(state.get('open_position'))}")
 
         await safe_send(
             bot,
             chat_id,
-            "🟢 [09:15 SCAN START]\n\n"
+            f"🟢 [09:15 SCAN START / {attempt}]\n\n"
             f"시간 : {now_kst_text()}\n"
-            "마감 15분봉 O→C 스캔을 시작합니다."
+            "실시간/백테스트 통합 함수로 마감 15분봉 O→C 스캔을 시작합니다."
         )
 
         if not state.get("running"):
             print("[SCAN SKIP] paper mode off")
-            await safe_send(bot, chat_id, "⏸ [09:15 SCAN SKIP]\n\n모의 실행 OFF 상태라 스캔을 건너뜁니다.")
+            await safe_send(bot, chat_id, f"⏸ [09:15 SCAN SKIP / {attempt}]\n\n모의 실행 OFF 상태라 스캔을 건너뜁니다.")
             return
 
         if state.get("open_position"):
             print("[SCAN SKIP] open position exists")
-            await safe_send(bot, chat_id, "⚠️ [09:15 SCAN SKIP]\n\n이미 오픈 포지션이 있어서 신규 진입을 막았습니다.")
+            await safe_send(bot, chat_id, f"⚠️ [09:15 SCAN SKIP / {attempt}]\n\n이미 오픈 포지션이 있어서 신규 진입을 막았습니다.")
             return
 
         threshold = state["settings"]["pump_threshold_pct"]
         result = await scan_latest_closed_15m_oc(threshold)
 
+        candidates = result.get("candidates", [])
+        top20 = result.get("top20") or candidates[:20]
+        passed = result.get("passed", [])
+        signal = result.get("signal")
+
         print(
-            f"[SCAN RESULT] target={result.get('target_open')} total={result.get('total_symbols')} "
-            f"errors={result.get('errors')} candidates={len(result.get('candidates', []))} "
-            f"signal={result.get('signal', {}).get('base') if result.get('signal') else None}"
+            f"[SCAN RESULT] attempt={attempt} target={result.get('target_open')} "
+            f"total={result.get('total_symbols')} errors={result.get('errors')} "
+            f"candidates={len(candidates)} passed={len(passed)} "
+            f"signal={signal.get('base') if signal else None}"
         )
 
+        if top20:
+            best = top20[0]
+            print(f"[SCAN TOP1] {best['base']} oc={best['change_pct']:.4f} passed={best.get('passed')}")
+        if signal:
+            print(f"[SCAN SIGNAL] {signal['base']} oc={signal['change_pct']:.4f}")
+
         append_daily_signal({
+            "attempt": attempt,
             "target_open": result.get("target_open"),
             "total_symbols": result.get("total_symbols"),
             "errors": result.get("errors"),
-            "signal": result.get("signal"),
-            "top20": result.get("candidates", [])[:20],
+            "passed_count": len(passed),
+            "signal": signal,
+            "top20": top20,
         })
-
-        candidates = result["candidates"]
-        signal = result["signal"]
 
         await safe_send(
             bot,
             chat_id,
             scan_result_message(
-                candidates,
+                top20,
                 threshold,
                 signal=signal,
                 total_symbols=result["total_symbols"],
                 errors=result["errors"],
-                title=f"{result['target_open']} 마감 15분봉 SCAN"
+                title=f"{result['target_open']} 마감 15분봉 SCAN / {attempt}"
             )
         )
 
         if not signal:
-            print("[SCAN END] no signal")
+            print(f"[SCAN END] no signal attempt={attempt}")
+            if attempt != "FINAL_RETRY":
+                await safe_send(
+                    bot,
+                    chat_id,
+                    f"🟠 [NO ENTRY / {attempt}]\n\n"
+                    f"통과 후보: {len(passed)}개\n"
+                    "다음 재시도에서 다시 확인합니다."
+                )
+            else:
+                await safe_send(
+                    bot,
+                    chat_id,
+                    "📭 [FINAL NO ENTRY]\n\n"
+                    "최종 재시도까지 완료했지만 진입 조건 충족 종목이 없습니다."
+                )
             return
 
-        pos = create_position(signal, reason="CLOSED_15M_OC_TOP1")
-        print(f"[ENTRY] {pos['base']} {pos['symbol']} price={pos['entries'][0]['price']}")
+        latest_state = load_state()
+        if latest_state.get("open_position"):
+            print("[ENTRY SKIP] open position appeared before entry")
+            await safe_send(bot, chat_id, "⚠️ [ENTRY SKIP]\n\n이미 오픈 포지션이 생겨 중복 진입을 막았습니다.")
+            return
+
+        pos = create_position(signal, reason=f"CLOSED_15M_OC_TOP1_{attempt}")
+        print(f"[ENTRY] attempt={attempt} {pos['base']} {pos['symbol']} price={pos['entries'][0]['price']}")
         await safe_send(bot, chat_id, entry_message(pos, signal))
 
     except Exception as e:
@@ -117,7 +150,7 @@ async def closed_15m_scan_job(bot, chat_id):
         await safe_send(
             bot,
             chat_id,
-            f"❌ [09:15 SCAN ERROR]\n\n{type(e).__name__}: {e}\n\nRailway 로그를 확인하세요."
+            f"❌ [09:15 SCAN ERROR / {attempt}]\n\n{type(e).__name__}: {e}\n\nRailway 로그를 확인하세요."
         )
 
 async def position_watch_job(bot, chat_id):
@@ -177,101 +210,36 @@ async def sl_check_job(bot, chat_id):
         print(f"[SL CHECK ERROR] {type(e).__name__}: {e}")
         await safe_send(bot, chat_id, f"❌ [16:00 SL CHECK ERROR]\n\n{type(e).__name__}: {e}")
 
-async def position_report_15m_job(bot, chat_id):
-    """
-    오픈 포지션이 있을 때만 15분마다 실시간 리포트 전송.
-    TP/SL 감시는 기존 30초 watcher가 담당하고,
-    이 함수는 사용자가 보기 좋은 정기 브리핑만 담당한다.
-    """
-    try:
-        state = load_state()
-        if not state.get("running"):
-            return
-
-        pos = state.get("open_position")
-        if not pos:
-            return
-
-        price = await get_bitget_price(pos["symbol"])
-        updated_pos = update_open_position_metrics(price)
-
-        if not updated_pos:
-            return
-
-        print(f"[15M REPORT] {updated_pos.get('base')} price={price} pnl={updated_pos.get('last_pnl_pct')}")
-        await safe_send(bot, chat_id, position_report_message(updated_pos, price))
-
-    except Exception as e:
-        print(f"[15M REPORT ERROR] {type(e).__name__}: {e}")
-
-
 def setup_scheduler(app, chat_id):
     timezone = pytz.timezone(KST_TIMEZONE)
     scheduler = AsyncIOScheduler(timezone=timezone)
 
+    scheduler.add_job(scheduler_alive_job, "cron", hour=8, minute=59, id="0859_scheduler_alive", args=[app.bot, chat_id], replace_existing=True)
+    scheduler.add_job(scan_ready_job, "cron", hour=9, minute=14, id="0914_scan_ready", args=[app.bot, chat_id], replace_existing=True)
+
     scheduler.add_job(
-        scheduler_alive_job,
-        "cron",
-        hour=8,
-        minute=59,
-        id="0859_scheduler_alive",
-        args=[app.bot, chat_id],
-        replace_existing=True
+        closed_15m_scan_job, "cron", hour=9, minute=15, second=20,
+        id="0915_closed_15m_scan_primary", args=[app.bot, chat_id, "PRIMARY"],
+        replace_existing=True, misfire_grace_time=300, coalesce=True, max_instances=1
+    )
+    scheduler.add_job(
+        closed_15m_scan_job, "cron", hour=9, minute=16, second=10,
+        id="0916_closed_15m_scan_retry", args=[app.bot, chat_id, "RETRY_1"],
+        replace_existing=True, misfire_grace_time=300, coalesce=True, max_instances=1
+    )
+    scheduler.add_job(
+        closed_15m_scan_job, "cron", hour=9, minute=17, second=10,
+        id="0917_closed_15m_scan_final_retry", args=[app.bot, chat_id, "FINAL_RETRY"],
+        replace_existing=True, misfire_grace_time=300, coalesce=True, max_instances=1
     )
 
     scheduler.add_job(
-        scan_ready_job,
-        "cron",
-        hour=9,
-        minute=14,
-        id="0914_scan_ready",
-        args=[app.bot, chat_id],
-        replace_existing=True
+        position_watch_job, "interval", seconds=30, id="position_watch_30s",
+        args=[app.bot, chat_id], replace_existing=True, max_instances=1
     )
-
     scheduler.add_job(
-        closed_15m_scan_job,
-        "cron",
-        hour=9,
-        minute=15,
-        id="0915_closed_15m_scan",
-        args=[app.bot, chat_id],
-        replace_existing=True,
-        misfire_grace_time=300,
-        coalesce=True,
-        max_instances=1
-    )
-
-    scheduler.add_job(
-        position_watch_job,
-        "interval",
-        seconds=30,
-        id="position_watch_30s",
-        args=[app.bot, chat_id],
-        replace_existing=True,
-        max_instances=1
-    )
-
-
-    scheduler.add_job(
-        position_report_15m_job,
-        "cron",
-        minute="0,15,30,45",
-        second=5,
-        id="position_report_15m",
-        args=[app.bot, chat_id],
-        replace_existing=True,
-        max_instances=1
-    )
-
-    scheduler.add_job(
-        sl_check_job,
-        "cron",
-        hour=16,
-        minute=0,
-        id="1600_sl_check",
-        args=[app.bot, chat_id],
-        replace_existing=True
+        sl_check_job, "cron", hour=16, minute=0, id="1600_sl_check",
+        args=[app.bot, chat_id], replace_existing=True
     )
 
     scheduler.start()

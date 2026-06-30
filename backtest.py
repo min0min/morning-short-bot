@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 import pytz
 
-from scanner import scan_closed_15m_oc_by_open_ms
+from scanner import select_signal_by_closed_15m
 
 KST = pytz.timezone("Asia/Seoul")
 
@@ -10,9 +10,13 @@ def kst_0900_open_ms(date_text):
     return int(dt.timestamp() * 1000)
 
 async def run_date_backtest(date_text, threshold_pct=3.0):
+    """
+    날짜 백테스트도 실시간과 동일한 select_signal_by_closed_15m() 사용.
+    """
     target_open_ms = kst_0900_open_ms(date_text)
-    result = await scan_closed_15m_oc_by_open_ms(target_open_ms, threshold_pct)
+    result = await select_signal_by_closed_15m(target_open_ms, threshold_pct)
     result["date"] = date_text
+    result["target_open"] = f"{date_text} 09:00 KST"
     return result
 
 def last_n_dates(n=7, end_date_text=None):
@@ -38,6 +42,9 @@ async def run_recent_days_backtest(days=7, threshold_pct=3.0, end_date_text=None
                 "total_symbols": 0,
                 "errors": 1,
                 "candidates": [],
+                "top20": [],
+                "passed": [],
+                "signal": None,
                 "error": f"{type(e).__name__}: {e}",
             })
 
