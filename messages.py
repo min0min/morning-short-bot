@@ -98,7 +98,7 @@ def status_message(state):
 
     return f"""📊 [내 상태]
 
-모의 실행 : {'ON' if state['running'] else 'OFF'}
+트레이딩 실행 : {'ON' if state['running'] else 'OFF'}
 가상 시드 : {fmt_usdt(state['seed_usdt'])}
 가상 잔고 : {fmt_usdt(state['paper_balance'])}
 

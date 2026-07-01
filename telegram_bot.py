@@ -31,7 +31,7 @@ TEMP_BINGX_API_KEY = "temp_bingx_api_key"
 def main_keyboard():
     rows = [
         [InlineKeyboardButton("🔑 API 키 등록", callback_data="api"), InlineKeyboardButton("💰 시드 설정", callback_data="seed")],
-        [InlineKeyboardButton("▶️ 모의 시작", callback_data="start_paper"), InlineKeyboardButton("⏸ 모의 중지", callback_data="stop_paper")],
+        [InlineKeyboardButton("▶️ 트레이딩 시작", callback_data="start_paper"), InlineKeyboardButton("⏸ 트레이딩 중지", callback_data="stop_paper")],
         [InlineKeyboardButton("📊 내 상태", callback_data="status"), InlineKeyboardButton("📋 거래 내역", callback_data="history")],
         [InlineKeyboardButton("💵 가상 수익 현황", callback_data="profit"), InlineKeyboardButton("📈 신호 통계", callback_data="stats")],
         [InlineKeyboardButton("⚙️ 비율·익절 설정", callback_data="settings")],
@@ -43,6 +43,13 @@ def main_keyboard():
         [InlineKeyboardButton("📢 안내사항", callback_data="notice")],
     ]
     return InlineKeyboardMarkup(rows)
+
+
+def api_agree_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ 동의하고 등록", callback_data="api_agree")],
+        [InlineKeyboardButton("❌ 취소", callback_data="cancel_to_menu")],
+    ])
 
 async def send_main_menu(update_or_query):
     if hasattr(update_or_query, "message") and update_or_query.message:
@@ -73,12 +80,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "start_paper":
         state["running"] = True
         save_state(state)
-        await query.edit_message_text("✅ 모의투자 시작\n\n상태 : PAPER MODE ON", reply_markup=main_keyboard())
+        await query.edit_message_text("✅ 트레이딩 시작\n\n상태 : TRADING MODE ON", reply_markup=main_keyboard())
 
     elif data == "stop_paper":
         state["running"] = False
         save_state(state)
-        await query.edit_message_text("⏸ 모의투자 중지\n\n상태 : PAPER MODE OFF", reply_markup=main_keyboard())
+        await query.edit_message_text("⏸ 트레이딩 중지\n\n상태 : TRADING MODE OFF", reply_markup=main_keyboard())
 
     elif data == "status":
         await query.edit_message_text(status_message(state), reply_markup=main_keyboard())
