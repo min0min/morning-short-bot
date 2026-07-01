@@ -145,9 +145,9 @@ async def send_main_menu(update_or_query):
             chat_id = None
 
     if hasattr(update_or_query, "message") and update_or_query.message:
-        await update_or_query.message.reply_text(main_menu_text(), reply_markup=main_keyboard(target_chat_id))
+        await update_or_query.message.reply_text(main_menu_text(), reply_markup=main_keyboard(chat_id))
     else:
-        await update_or_query.edit_message_text(main_menu_text(), reply_markup=main_keyboard(target_chat_id))
+        await update_or_query.edit_message_text(main_menu_text(), reply_markup=main_keyboard(chat_id))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -174,40 +174,40 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = load_state()
 
     if data.startswith("admin_approve:"):
-        target_chat_id = data.split(":", 1)[1]
+        chat_id = data.split(":", 1)[1]
         if not is_admin_chat(update.effective_chat.id):
             await query.edit_message_text("⛔ 관리자만 승인할 수 있습니다.")
             return
-        approve_user(target_chat_id)
-        await query.edit_message_text(f"✅ 승인 완료\n\nchat_id: {target_chat_id}")
+        approve_user(chat_id)
+        await query.edit_message_text(f"✅ 승인 완료\n\nchat_id: {chat_id}")
         try:
-            await context.bot.send_message(chat_id=target_chat_id, text=user_approved_message(), reply_markup=main_keyboard(target_chat_id))
+            await context.bot.send_message(chat_id=chat_id, text=user_approved_message(), reply_markup=main_keyboard(chat_id))
         except Exception as e:
             print(f"[APPROVAL USER NOTIFY ERROR] {type(e).__name__}: {e}")
         return
 
     elif data.startswith("admin_reject:"):
-        target_chat_id = data.split(":", 1)[1]
+        chat_id = data.split(":", 1)[1]
         if not is_admin_chat(update.effective_chat.id):
             await query.edit_message_text("⛔ 관리자만 거절할 수 있습니다.")
             return
-        reject_user(target_chat_id)
-        await query.edit_message_text(f"❌ 승인 거절\n\nchat_id: {target_chat_id}")
+        reject_user(chat_id)
+        await query.edit_message_text(f"❌ 승인 거절\n\nchat_id: {chat_id}")
         try:
-            await context.bot.send_message(chat_id=target_chat_id, text=user_rejected_message(), reply_markup=main_keyboard(target_chat_id))
+            await context.bot.send_message(chat_id=chat_id, text=user_rejected_message(), reply_markup=main_keyboard(chat_id))
         except Exception as e:
             print(f"[REJECT USER NOTIFY ERROR] {type(e).__name__}: {e}")
         return
 
     elif data.startswith("admin_pause:"):
-        target_chat_id = data.split(":", 1)[1]
+        chat_id = data.split(":", 1)[1]
         if not is_admin_chat(update.effective_chat.id):
             await query.edit_message_text("⛔ 관리자만 보류할 수 있습니다.")
             return
-        pause_user(target_chat_id)
-        await query.edit_message_text(f"⏸ 보류/일시정지 완료\n\nchat_id: {target_chat_id}")
+        pause_user(chat_id)
+        await query.edit_message_text(f"⏸ 보류/일시정지 완료\n\nchat_id: {chat_id}")
         try:
-            await context.bot.send_message(chat_id=target_chat_id, text="⏸ 관리자에 의해 보류/일시정지 상태가 되었습니다.", reply_markup=main_keyboard(target_chat_id))
+            await context.bot.send_message(chat_id=chat_id, text="⏸ 관리자에 의해 보류/일시정지 상태가 되었습니다.", reply_markup=main_keyboard(chat_id))
         except Exception as e:
             print(f"[PAUSE USER NOTIFY ERROR] {type(e).__name__}: {e}")
         return
