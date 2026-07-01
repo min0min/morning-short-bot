@@ -337,7 +337,7 @@ async def sl_check_job(bot, chat_id):
             closed = save_live_close(close_result, close_price=price)
             await safe_send(bot, chat_id, live_close_success_message(closed))
         else:
-            await safe_send(bot, chat_id, f"🕓 [16:00 LIVE SL CHECK]\n\n현재 손익률 {pnl:+.2f}%\n손절 기준 {sl:.2f}% 이하 아님 → 홀딩 유지")
+            await safe_send(bot, chat_id, f"🕓 [16:00 LIVE SL CHECK]\n\n현재 손익률 {pnl:+.2f}%\n손절 기준 {sl:.2f}% 이하 아님 → 손절하지 않고 계속 홀딩합니다.\n이후에도 30초 감시는 유지되고, TP +12% 도달 시 자동 익절합니다.")
 
     except Exception as e:
         print(f"[SL CHECK ERROR] {type(e).__name__}: {e}")

@@ -538,3 +538,200 @@ async def place_short_market_order(api_key: str, api_secret: str, symbol: str, m
         "rule": calc["rule"],
         "raw": data,
     }
+
+
+# ==============================
+# v4.4.1 IMPORT HOTFIX
+# Missing v4.3.3 leverage/fill wrappers restored.
+# ==============================
+
+def _extract_order_id(raw):
+    if not isinstance(raw, dict):
+        return None
+    data = raw.get("data")
+    if isinstance(data, dict):
+        return data.get("orderId") or data.get("orderID") or data.get("id")
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        return data[0].get("orderId") or data[0].get("orderID") or data[0].get("id")
+    return raw.get("orderId") or raw.get("orderID") or raw.get("id")
+
+def _parse_avg_price_and_qty_from_order_payload(payload):
+    if not isinstance(payload, dict):
+        return {"avg_price": None, "executed_qty": None, "fee": 0.0, "realized_pnl": None, "raw": payload}
+
+    obj = payload.get("data", payload)
+
+    if isinstance(obj, list):
+        total_qty = 0.0
+        total_value = 0.0
+        fee = 0.0
+        realized = 0.0
+        realized_seen = False
+
+        for item in obj:
+            if not isinstance(item, dict):
+                continue
+
+            price = _safe_float(item.get("price") or item.get("filledPrice") or item.get("avgPrice") or item.get("dealPrice"), None)
+            qty = _safe_float(item.get("qty") or item.get("quantity") or item.get("executedQty") or item.get("filledQty") or item.get("volume"), None)
+
+            if price is not None and qty is not None:
+                total_qty += abs(qty)
+                total_value += abs(qty) * price
+
+            fee += float(_safe_float(item.get("fee") or item.get("commission"), 0.0) or 0.0)
+
+            rp = _safe_float(item.get("realizedPnl") or item.get("realizedPNL") or item.get("profit"), None)
+            if rp is not None:
+                realized += rp
+                realized_seen = True
+
+        avg = (total_value / total_qty) if total_qty else None
+        return {
+            "avg_price": avg,
+            "executed_qty": total_qty if total_qty else None,
+            "fee": fee,
+            "realized_pnl": realized if realized_seen else None,
+            "raw": payload,
+        }
+
+    if isinstance(obj, dict):
+        avg = _safe_float(
+            obj.get("avgPrice") or obj.get("priceAvg") or obj.get("executedPrice") or
+            obj.get("filledPrice") or obj.get("price") or obj.get("dealAvgPrice"),
+            None
+        )
+        qty = _safe_float(
+            obj.get("executedQty") or obj.get("filledQty") or obj.get("cumQty") or
+            obj.get("quantity") or obj.get("qty") or obj.get("volume"),
+            None
+        )
+        fee = _safe_float(obj.get("fee") or obj.get("commission"), 0.0) or 0.0
+        realized = _safe_float(obj.get("realizedPnl") or obj.get("realizedPNL") or obj.get("profit"), None)
+        return {
+            "avg_price": avg,
+            "executed_qty": abs(qty) if qty is not None else None,
+            "fee": fee,
+            "realized_pnl": realized,
+            "raw": payload,
+        }
+
+    return {"avg_price": None, "executed_qty": None, "fee": 0.0, "realized_pnl": None, "raw": payload}
+
+async def set_bingx_leverage(api_key: str, api_secret: str, symbol: str, leverage: int = 4):
+    symbol = normalize_bingx_symbol(symbol)
+    params = {"symbol": symbol, "side": "SHORT", "leverage": int(leverage)}
+    return await _bingx_signed_request(api_key, api_secret, "POST", "/openApi/swap/v2/trade/leverage", params)
+
+async def get_bingx_order_detail(api_key: str, api_secret: str, symbol: str, order_id):
+    symbol = normalize_bingx_symbol(symbol)
+    if not order_id:
+        return None
+
+    candidates = [
+        ("/openApi/swap/v2/trade/order", {"symbol": symbol, "orderId": order_id}),
+        ("/openApi/swap/v2/trade/allOrders", {"symbol": symbol, "orderId": order_id, "limit": 1}),
+    ]
+
+    last_error = None
+    for path, params in candidates:
+        try:
+            return await _bingx_signed_request(api_key, api_secret, "GET", path, params)
+        except Exception as e:
+            last_error = e
+            continue
+
+    print(f"[ORDER DETAIL ERROR] {type(last_error).__name__}: {last_error}")
+    return None
+
+async def get_bingx_order_fills(api_key: str, api_secret: str, symbol: str, order_id=None):
+    symbol = normalize_bingx_symbol(symbol)
+    candidates = []
+
+    if order_id:
+        candidates.extend([
+            ("/openApi/swap/v2/trade/allFillOrders", {"symbol": symbol, "orderId": order_id, "limit": 50}),
+            ("/openApi/swap/v2/trade/fillHistory", {"symbol": symbol, "orderId": order_id, "limit": 50}),
+            ("/openApi/swap/v2/trade/fills", {"symbol": symbol, "orderId": order_id, "limit": 50}),
+        ])
+
+    candidates.extend([
+        ("/openApi/swap/v2/trade/allFillOrders", {"symbol": symbol, "limit": 20}),
+        ("/openApi/swap/v2/trade/fillHistory", {"symbol": symbol, "limit": 20}),
+        ("/openApi/swap/v2/trade/fills", {"symbol": symbol, "limit": 20}),
+    ])
+
+    last_error = None
+    for path, params in candidates:
+        try:
+            return await _bingx_signed_request(api_key, api_secret, "GET", path, params)
+        except Exception as e:
+            last_error = e
+            continue
+
+    print(f"[ORDER FILLS ERROR] {type(last_error).__name__}: {last_error}")
+    return None
+
+async def get_fill_summary(api_key: str, api_secret: str, symbol: str, order_id=None, fallback_raw=None):
+    detail = await get_bingx_order_detail(api_key, api_secret, symbol, order_id)
+    summary = _parse_avg_price_and_qty_from_order_payload(detail)
+    if summary.get("avg_price") or summary.get("executed_qty") or summary.get("realized_pnl") is not None:
+        summary["source"] = "order_detail"
+        return summary
+
+    fills = await get_bingx_order_fills(api_key, api_secret, symbol, order_id)
+    summary = _parse_avg_price_and_qty_from_order_payload(fills)
+    if summary.get("avg_price") or summary.get("executed_qty") or summary.get("realized_pnl") is not None:
+        summary["source"] = "fills"
+        return summary
+
+    summary = _parse_avg_price_and_qty_from_order_payload(fallback_raw)
+    summary["source"] = "order_response_fallback"
+    return summary
+
+async def place_short_market_order_with_leverage(api_key: str, api_secret: str, symbol: str, margin_usdt: float, leverage: int = 4):
+    leverage_result = None
+    leverage_error = None
+
+    try:
+        leverage_result = await set_bingx_leverage(api_key, api_secret, symbol, leverage)
+        print(f"[LEVERAGE SET] {symbol} {leverage}x")
+    except Exception as e:
+        leverage_error = f"{type(e).__name__}: {e}"
+        print(f"[LEVERAGE SET ERROR] {leverage_error}")
+
+    result = await place_short_market_order(api_key, api_secret, symbol, margin_usdt)
+    order_id = _extract_order_id(result.get("raw"))
+    fill = await get_fill_summary(api_key, api_secret, result["symbol"], order_id, fallback_raw=result.get("raw"))
+
+    result["order_id"] = order_id
+    result["leverage"] = int(leverage)
+    result["leverage_result"] = leverage_result
+    result["leverage_error"] = leverage_error
+    result["fill"] = fill
+
+    if fill.get("avg_price"):
+        result["filled_avg_price"] = fill.get("avg_price")
+    if fill.get("executed_qty"):
+        result["executed_qty"] = fill.get("executed_qty")
+
+    return result
+
+async def close_short_market_position_with_fills(api_key: str, api_secret: str, symbol: str):
+    result = await close_short_market_position(api_key, api_secret, symbol)
+    order_id = _extract_order_id(result.get("raw"))
+    fill = await get_fill_summary(api_key, api_secret, result["symbol"], order_id, fallback_raw=result.get("raw"))
+
+    result["order_id"] = order_id
+    result["fill"] = fill
+
+    if fill.get("avg_price"):
+        result["filled_avg_price"] = fill.get("avg_price")
+    if fill.get("executed_qty"):
+        result["executed_qty"] = fill.get("executed_qty")
+    if fill.get("realized_pnl") is not None:
+        result["realized_pnl"] = fill.get("realized_pnl")
+    if fill.get("fee") is not None:
+        result["fee"] = fill.get("fee")
+
+    return result
