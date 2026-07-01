@@ -212,7 +212,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "profit":
         stats = get_real_test_stats, get_live_trade_stats, set_user_pending_approval, approve_user, reject_user, pause_user()
-        await query.edit_message_text(real_test_stats_message(stats), reply_markup=main_keyboard())
+        await query.message.reply_text(live_profit_message(stats), reply_markup=main_keyboard())
+        return
 
     elif data == "stats":
         stats = calc_trade_stats()
