@@ -95,3 +95,91 @@ async def test_bingx_read_connection(api_key: str, api_secret: str):
         "available_usdt": balance["available_usdt"],
         "positions_count": len(pos) if isinstance(pos, list) else 0,
     }
+
+
+async def _bingx_public_get(path: str, params: dict | None = None):
+    query = urlencode(sorted((params or {}).items()))
+    url = f"{BINGX_BASE_URL}{path}"
+    if query:
+        url = f"{url}?{query}"
+
+    timeout = aiohttp.ClientTimeout(total=20)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(url) as resp:
+            text = await resp.text()
+            try:
+                data = await resp.json()
+            except Exception:
+                raise RuntimeError(f"BingX 공개 API JSON 파싱 실패: HTTP {resp.status} / {text[:300]}")
+
+            if resp.status >= 400:
+                raise RuntimeError(f"BingX 공개 API HTTP 오류: {resp.status} / {data}")
+
+            code = str(data.get("code", "0"))
+            if code not in ("0", "200"):
+                raise RuntimeError(f"BingX 공개 API 오류: code={data.get('code')} msg={data.get('msg')}")
+
+            return data
+
+def _normalize_bingx_symbol(base_or_symbol: str) -> str:
+    s = str(base_or_symbol).upper().strip()
+    s = s.replace("-", "").replace("_", "")
+    if s.endswith("USDT"):
+        base = s[:-4]
+    else:
+        base = s
+    return f"{base}-USDT"
+
+async def get_bingx_contracts():
+    """
+    BingX USDT-M perpetual futures contract list.
+    Endpoint: /openApi/swap/v2/quote/contracts
+    """
+    data = await _bingx_public_get("/openApi/swap/v2/quote/contracts", {})
+    contracts = data.get("data", [])
+    if contracts is None:
+        contracts = []
+    return contracts
+
+async def is_bingx_futures_listed(base_or_symbol: str):
+    """
+    Returns:
+      {
+        listed: bool,
+        symbol: 'POWR-USDT',
+        raw_symbol: contract symbol if found,
+        contract: original contract dict or None
+      }
+    """
+    wanted = _normalize_bingx_symbol(base_or_symbol)
+    wanted_compact = wanted.replace("-", "")
+
+    contracts = await get_bingx_contracts()
+
+    for c in contracts:
+        if not isinstance(c, dict):
+            continue
+        raw_symbol = str(c.get("symbol") or c.get("contractSymbol") or c.get("pair") or "").upper()
+        raw_compact = raw_symbol.replace("-", "").replace("_", "")
+        if raw_symbol == wanted or raw_compact == wanted_compact:
+            status = str(c.get("status") or c.get("state") or c.get("enableTrade") or "").upper()
+            # If status field is absent, treat matching symbol as listed.
+            listed = True
+            if status in ("OFFLINE", "SUSPEND", "SUSPENDED", "FALSE", "0"):
+                listed = False
+            return {
+                "listed": listed,
+                "symbol": wanted,
+                "raw_symbol": raw_symbol,
+                "contract": c,
+            }
+
+    return {
+        "listed": False,
+        "symbol": wanted,
+        "raw_symbol": None,
+        "contract": None,
+    }
+
+async def test_bingx_listing(base_or_symbol: str):
+    return await is_bingx_futures_listed(base_or_symbol)

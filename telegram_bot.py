@@ -15,25 +15,27 @@ from messages import (
     seed_setting_message,
     bingx_connection_success_message,
     bingx_connection_fail_message,
+    bingx_listing_result_message,
 )
 from exchanges import get_crosslisted_futures_snapshot, get_exchange_debug_text
 from strategy import create_position
 from backtest import run_date_backtest, run_recent_days_backtest
 from scanner import scan_latest_closed_15m_oc
-from bingx import test_bingx_read_connection, get_bingx_swap_balance
+from bingx import test_bingx_read_connection, get_bingx_swap_balance, test_bingx_listing
 
 WAITING_SEED = "waiting_seed"
 WAITING_BACKTEST_DATE = "waiting_backtest_date"
 WAITING_BINGX_API_KEY = "waiting_bingx_api_key"
 WAITING_BINGX_API_SECRET = "waiting_bingx_api_secret"
 TEMP_BINGX_API_KEY = "temp_bingx_api_key"
+WAITING_BINGX_LISTING_SYMBOL = "waiting_bingx_listing_symbol"
 
 def main_keyboard():
     rows = [
         [InlineKeyboardButton("🔑 API 키 등록", callback_data="api"), InlineKeyboardButton("💰 시드 설정", callback_data="seed")],
         [InlineKeyboardButton("▶️ 트레이딩 시작", callback_data="start_paper"), InlineKeyboardButton("⏸ 트레이딩 중지", callback_data="stop_paper")],
         [InlineKeyboardButton("📊 내 상태", callback_data="status"), InlineKeyboardButton("📋 거래 내역", callback_data="history")],
-        [InlineKeyboardButton("💵 가상 수익 현황", callback_data="profit"), InlineKeyboardButton("📈 신호 통계", callback_data="stats")],
+        [InlineKeyboardButton("💵 수익 현황", callback_data="profit"), InlineKeyboardButton("📈 신호 통계", callback_data="stats")],
         [InlineKeyboardButton("⚙️ 비율·익절 설정", callback_data="settings")],
         [InlineKeyboardButton("🎯 종목 선정 기준", callback_data="criteria")],
         [InlineKeyboardButton("🧪 마감 15분봉 즉시 테스트", callback_data="closed_15m_test")],
@@ -104,8 +106,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "profit":
         pnl = float(state["paper_balance"]) - float(state["seed_usdt"])
         await query.edit_message_text(
-            f"💵 가상 수익 현황\n\n시작 시드 : ${state['seed_usdt']:,.2f}\n현재 잔고 : ${state['paper_balance']:,.2f}\n누적 손익 : ${pnl:,.2f}",
+            f"💵 수익 현황\n\n시작 시드 : ${state['seed_usdt']:,.2f}\n현재 잔고 : ${state['paper_balance']:,.2f}\n누적 손익 : ${pnl:,.2f}",
             reply_markup=main_keyboard()
+        )
+
+    elif data == "bingx_listing_test":
+        context.user_data[WAITING_BINGX_LISTING_SYMBOL] = True
+        await query.edit_message_text(
+            "🔎 BingX 선물 상장 체크\n\n확인할 종목명을 입력해주세요.\n예) POWR 또는 POWRUSDT\n\n❌ 취소하려면 /start"
         )
 
     elif data == "stats":
@@ -211,6 +219,26 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat:
         save_active_chat_id(update.effective_chat.id)
+    if context.user_data.get(WAITING_BINGX_LISTING_SYMBOL):
+        symbol_text = update.message.text.strip().upper()
+        context.user_data[WAITING_BINGX_LISTING_SYMBOL] = False
+
+        checking_msg = await update.message.reply_text(f"🔎 BingX 상장 여부 확인중...\\n종목 : {symbol_text}")
+        try:
+            result = await test_bingx_listing(symbol_text)
+            base = symbol_text.replace("USDT", "").replace("-USDT", "")
+            await checking_msg.edit_text(
+                bingx_listing_result_message(base, result),
+                reply_markup=main_keyboard()
+            )
+        except Exception as e:
+            await checking_msg.edit_text(
+                f"❌ BingX 상장 체크 실패\\n\\n{type(e).__name__}: {e}",
+                reply_markup=main_keyboard()
+            )
+        return
+
+
     if context.user_data.get(WAITING_BINGX_API_KEY):
         api_key = update.message.text.strip()
         context.user_data[WAITING_BINGX_API_KEY] = False

@@ -290,3 +290,23 @@ def bingx_connection_fail_message(error):
 2. Read 권한 체크 여부
 3. Perpetual Futures 계정 접근 가능 여부
 4. IP 제한 설정 여부"""
+
+
+def bingx_listing_result_message(base, result):
+    listed = bool(result.get("listed"))
+    symbol = result.get("symbol") or f"{base}-USDT"
+    if listed:
+        return f"""✅ BingX 선물 상장 확인
+
+종목 : {base}
+BingX 심볼 : {symbol}
+
+상태 : 상장됨
+다음 단계에서 이 종목은 실전 주문 후보로 사용할 수 있습니다."""
+    return f"""❌ BingX 선물 미상장
+
+종목 : {base}
+예상 심볼 : {symbol}
+
+상태 : BingX USDT-M 선물 미상장
+전략 신호가 떠도 실전 진입은 하지 않습니다."""
