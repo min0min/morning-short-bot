@@ -36,11 +36,14 @@ async def main():
     for job in scheduler.get_jobs():
         print(f"- {job.id} / next={job.next_run_time}")
     print("====================================")
-
+    await asyncio.sleep(10)
+    
     await app.initialize()
     await app.start()
-    await app.updater.start_polling()
-
+    await app.updater.start_polling(
+    drop_pending_updates=True,
+    allowed_updates=None,
+    )
     # Startup message: active_chat_id가 있을 때만 전송. 없으면 에러 없이 스킵.
     try:
         active_chat_id = load_active_chat_id()
