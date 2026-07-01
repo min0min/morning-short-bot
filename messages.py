@@ -292,21 +292,47 @@ def bingx_connection_fail_message(error):
 4. IP 제한 설정 여부"""
 
 
-def bingx_listing_result_message(base, result):
-    listed = bool(result.get("listed"))
-    symbol = result.get("symbol") or f"{base}-USDT"
-    if listed:
-        return f"""✅ BingX 선물 상장 확인
+def bingx_auto_listing_ok_message(signal, listing):
+    base = signal.get("base")
+    bx_symbol = listing.get("raw_symbol") or listing.get("symbol")
+    return f"""✅ BingX 선물 상장 확인
 
-종목 : {base}
-BingX 심볼 : {symbol}
+선정 종목 : {base}
+BingX 심볼 : {bx_symbol}
 
 상태 : 상장됨
-다음 단계에서 이 종목은 실전 주문 후보로 사용할 수 있습니다."""
-    return f"""❌ BingX 선물 미상장
+PAPER 진입을 진행합니다.
 
-종목 : {base}
-예상 심볼 : {symbol}
+※ 현재 버전은 실전 주문이 아니라 PAPER 진입 단계입니다."""
 
-상태 : BingX USDT-M 선물 미상장
-전략 신호가 떠도 실전 진입은 하지 않습니다."""
+def bingx_auto_listing_skip_message(signal, listing):
+    base = signal.get("base")
+    bx_symbol = listing.get("symbol") or f"{base}-USDT"
+    oc = float(signal.get("change_pct", 0))
+    return f"""❌ BingX 선물 미상장 → 진입 없음
+
+선정 종목 : {base}
+예상 BingX 심볼 : {bx_symbol}
+
+09:15 전략 조건은 충족했지만,
+BingX USDT-M 선물에 존재하지 않는 종목이라 주문하지 않습니다.
+
+조건:
+✅ Bitget 선물 감지
+✅ 업비트+빗썸 교차상장
+✅ 15분봉 O→C +{oc:.2f}%
+❌ BingX 선물 미상장
+
+결론 : 진입 없음"""
+
+def bingx_auto_listing_error_message(signal, error):
+    base = signal.get("base")
+    return f"""⚠️ BingX 상장 확인 실패 → 안전상 진입 보류
+
+선정 종목 : {base}
+
+BingX 상장 여부 확인 중 오류가 발생했습니다.
+실전 안정성을 위해 이번 신호는 진입하지 않습니다.
+
+오류:
+{error}"""

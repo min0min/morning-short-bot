@@ -121,10 +121,12 @@ async def _bingx_public_get(path: str, params: dict | None = None):
 
             return data
 
-def _normalize_bingx_symbol(base_or_symbol: str) -> str:
+def normalize_bingx_symbol(base_or_symbol: str) -> str:
     s = str(base_or_symbol).upper().strip()
-    s = s.replace("-", "").replace("_", "")
-    if s.endswith("USDT"):
+    s = s.replace("_", "-")
+    if s.endswith("-USDT"):
+        base = s[:-5]
+    elif s.endswith("USDT"):
         base = s[:-4]
     else:
         base = s
@@ -133,7 +135,6 @@ def _normalize_bingx_symbol(base_or_symbol: str) -> str:
 async def get_bingx_contracts():
     """
     BingX USDT-M perpetual futures contract list.
-    Endpoint: /openApi/swap/v2/quote/contracts
     """
     data = await _bingx_public_get("/openApi/swap/v2/quote/contracts", {})
     contracts = data.get("data", [])
@@ -143,19 +144,19 @@ async def get_bingx_contracts():
 
 async def is_bingx_futures_listed(base_or_symbol: str):
     """
-    Returns:
-      {
-        listed: bool,
-        symbol: 'POWR-USDT',
-        raw_symbol: contract symbol if found,
-        contract: original contract dict or None
-      }
+    Bitget signal base/symbol -> BingX USDT-M futures listing check.
+    Returns dict:
+    {
+      listed: bool,
+      symbol: "POWR-USDT",
+      raw_symbol: "POWR-USDT" or None,
+      contract: {...} or None
+    }
     """
-    wanted = _normalize_bingx_symbol(base_or_symbol)
+    wanted = normalize_bingx_symbol(base_or_symbol)
     wanted_compact = wanted.replace("-", "")
 
     contracts = await get_bingx_contracts()
-
     for c in contracts:
         if not isinstance(c, dict):
             continue
@@ -163,7 +164,6 @@ async def is_bingx_futures_listed(base_or_symbol: str):
         raw_compact = raw_symbol.replace("-", "").replace("_", "")
         if raw_symbol == wanted or raw_compact == wanted_compact:
             status = str(c.get("status") or c.get("state") or c.get("enableTrade") or "").upper()
-            # If status field is absent, treat matching symbol as listed.
             listed = True
             if status in ("OFFLINE", "SUSPEND", "SUSPENDED", "FALSE", "0"):
                 listed = False
@@ -180,6 +180,3 @@ async def is_bingx_futures_listed(base_or_symbol: str):
         "raw_symbol": None,
         "contract": None,
     }
-
-async def test_bingx_listing(base_or_symbol: str):
-    return await is_bingx_futures_listed(base_or_symbol)

@@ -7,8 +7,9 @@ from config import KST_TIMEZONE
 from storage import load_state, append_daily_signal, load_active_chat_id
 from exchanges import get_bitget_price
 from scanner import scan_latest_closed_15m_oc
+from bingx import is_bingx_futures_listed
 from strategy import create_position, add_entry_if_needed, check_tp, check_sl_after_16, update_open_position_metrics
-from messages import entry_message, add_message, close_message, scan_result_message
+from messages import entry_message, add_message, close_message, scan_result_message, bingx_auto_listing_ok_message, bingx_auto_listing_skip_message, bingx_auto_listing_error_message
 
 KST = pytz.timezone(KST_TIMEZONE)
 
@@ -156,6 +157,27 @@ async def closed_15m_scan_job(bot, chat_id, attempt="PRIMARY"):
         if latest_state.get("open_position"):
             print("[ENTRY SKIP] open position appeared before entry")
             await safe_send(bot, chat_id, "⚠️ [ENTRY SKIP]\n\n이미 오픈 포지션이 생겨 중복 진입을 막았습니다.")
+            return
+
+        # v4.2: BingX 자동 상장 여부 확인
+        try:
+            listing = await is_bingx_futures_listed(signal.get("base") or signal.get("symbol"))
+            print(
+                f"[BINGX LISTING] base={signal.get('base')} "
+                f"listed={listing.get('listed')} symbol={listing.get('symbol')} raw={listing.get('raw_symbol')}"
+            )
+
+            if not listing.get("listed"):
+                await safe_send(bot, chat_id, bingx_auto_listing_skip_message(signal, listing))
+                print(f"[ENTRY SKIP] BingX not listed base={signal.get('base')}")
+                return
+
+            await safe_send(bot, chat_id, bingx_auto_listing_ok_message(signal, listing))
+
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"
+            print(f"[BINGX LISTING ERROR] {err}")
+            await safe_send(bot, chat_id, bingx_auto_listing_error_message(signal, err))
             return
 
         pos = create_position(signal, reason=f"CLOSED_15M_OC_TOP1_{attempt}")
