@@ -83,27 +83,39 @@ def close_message(pos, balance):
 
 상태 : PAPER MODE"""
 
-def status_message(state):
-    pos = state.get("open_position")
+def status_message(state, live_balance=None):
+    pos = state.get("live_position") or state.get("open_position")
     if not pos:
         position_text = "없음"
     else:
-        position_text = f"""{pos['base']} SHORT
-평균가 : {pos['avg_price']:.8f}
-총 증거금 : {fmt_usdt(pos['total_margin'])}
-진입 차수 : {len(pos['entries'])}차
-현재 수익률 : {pos.get('last_pnl_pct', 0):.2f}%
-최대 유리 : {pos.get('max_pnl_pct', 0):.2f}%
-최대 불리 : {pos.get('min_pnl_pct', 0):.2f}%"""
+        entries = pos.get("entries", [])
+        position_text = f"""{pos.get('base')} SHORT
+평균가 : {float(pos.get('avg_price', 0) or 0):.8f}
+수량 : {float(pos.get('qty', 0) or 0):,.6f}
+진입 차수 : {len(entries)}차
+현재 수익률 : {float(pos.get('last_pnl_pct', 0) or 0):+.2f}%
+최대 유리 : {float(pos.get('max_pnl_pct', 0) or 0):+.2f}%
+최대 불리 : {float(pos.get('min_pnl_pct', 0) or 0):+.2f}%"""
+
+    seed_mode = "자동 조회" if state.get("seed_mode") == "auto" else "고정"
+    seed_text = "자동 조회" if state.get("seed_mode") == "auto" else fmt_usdt(state.get("seed_usdt", 0))
+    balance_text = f"{float(live_balance):,.2f} USDT" if live_balance is not None else "조회 전"
 
     return f"""📊 [내 상태]
 
-트레이딩 실행 : {'ON' if state['running'] else 'OFF'}
-가상 시드 : {fmt_usdt(state['seed_usdt'])}
-가상 잔고 : {fmt_usdt(state['paper_balance'])}
+• 거래소: BingX Futures
+• API: {'✅ 등록됨' if state.get('api_registered') else '❌ 미등록'}
+• 트레이딩: {'▶️ 활성화' if state.get('running') else '⏸ OFF'}
+• 시드: {seed_text}
+• 시드 방식: {seed_mode}
+• 선물 잔고: {balance_text}
+• 레버리지: 4배 고정
+• 전략: Morning Short
+• 가입일: {state.get('joined_at') or '-'}
 
-오픈 포지션 :
+오픈 포지션:
 {position_text}"""
+
 
 def scan_result_message(candidates, threshold, signal=None, total_symbols=None, errors=0, title="09:15 마감봉 SCAN"):
     if not candidates:
@@ -360,39 +372,35 @@ def real_order_test_warning_message(symbol="DOGE-USDT", margin_usdt=1.0):
 
 def real_order_success_message(result):
     raw = result.get("raw", {})
-    order_id = result.get("order_id") or "-"
-    data = raw.get("data") if isinstance(raw, dict) else None
-    if order_id == "-" and isinstance(data, dict):
+    order_id = "-"
+    data = raw.get("data")
+    if isinstance(data, dict):
         order_id = data.get("orderId") or data.get("orderID") or data.get("id") or "-"
 
-    adjusted_text = "예" if result.get("adjusted") else "아니오"
-    fill = result.get("fill") or {}
+    adjusted_text = "아니오"
+    if result.get("adjusted"):
+        adjusted_text = "예"
 
-    filled_avg = result.get("filled_avg_price") or fill.get("avg_price") or result.get("price_ref")
-    executed_qty = result.get("executed_qty") or fill.get("executed_qty") or result.get("qty")
-    fill_source = fill.get("source", "fallback")
-
-    lev_msg = f"{result.get('leverage', 4)}배"
-    lev_err = result.get("leverage_error")
-    if lev_err:
-        lev_msg += f" (설정 확인 필요: {lev_err})"
+    rule = result.get("rule", {})
+    min_qty = rule.get("min_qty")
+    min_notional = rule.get("min_notional")
 
     return f"""✅ 실전 테스트 주문 성공
 
 거래소 : BingX Futures
 동작 : SHORT 진입
 심볼 : {result.get('symbol')}
-레버리지 : {lev_msg}
 
 요청 금액 : ${float(result.get('margin_usdt', 0)):,.2f}
+참고 가격 : {result.get('price_ref')}
+
 요청 수량 : {float(result.get('requested_qty', 0)):,.6f}
-
-실제 주문 수량 : {executed_qty}
-체결 평균가 : {filled_avg}
-체결 정보 출처 : {fill_source}
-
+실제 주문 수량 : {result.get('qty')}
 예상 주문금액 : ${float(result.get('actual_notional_usdt', 0)):,.2f}
+
 거래소 규칙 자동보정 : {adjusted_text}
+최소 수량 : {min_qty if min_qty else '거래소 응답 기준'}
+최소 금액 : {min_notional if min_notional else '거래소 응답 기준'}
 
 Order ID : {order_id}
 
@@ -438,35 +446,30 @@ def real_close_fail_message(error):
 
 def real_close_success_message_with_pnl(result, closed_pos):
     raw = result.get("raw", {})
-    order_id = result.get("order_id") or "-"
-    data = raw.get("data") if isinstance(raw, dict) else None
-    if order_id == "-" and isinstance(data, dict):
+    order_id = "-"
+    data = raw.get("data")
+    if isinstance(data, dict):
         order_id = data.get("orderId") or data.get("orderID") or data.get("id") or "-"
 
     pnl = float(closed_pos.get("realized_pnl", 0) or 0)
     pnl_pct = float(closed_pos.get("pnl_pct", 0) or 0)
     close_price = closed_pos.get("close_price") or "-"
-    source = closed_pos.get("realized_pnl_source", "unknown")
-    fee = float(closed_pos.get("fee", 0) or 0)
 
     return f"""✅ 실전 테스트 청산 성공
 
 거래소 : BingX Futures
 동작 : SHORT 청산
 심볼 : {result.get('symbol')}
-청산 수량 : {closed_pos.get('qty')}
-청산 평균가 : {close_price}
+청산 수량 : {result.get('qty')}
+청산 참고가 : {close_price}
 
-실현손익 : ${pnl:,.6f}
-수익률 : {pnl_pct:+.4f}%
-수수료 : ${fee:,.6f}
-손익 출처 : {source}
+추정 실현손익 : ${pnl:,.4f}
+추정 수익률 : {pnl_pct:+.4f}%
 
 Order ID : {order_id}
 
-실전 주문 엔진 테스트 완료.
+실전 주문 엔진 1차 테스트 완료.
 거래내역/수익현황에 반영했습니다."""
-
 
 def real_test_stats_message(stats):
     total = int(stats.get("total", 0))
@@ -491,4 +494,102 @@ def real_test_stats_message(stats):
 최고 거래 : {best.get('symbol', '없음')} {float(best.get('pnl_pct', 0) or 0):+.4f}% / ${float(best.get('pnl', 0) or 0):,.4f}
 최악 거래 : {worst.get('symbol', '없음')} {float(worst.get('pnl_pct', 0) or 0):+.4f}% / ${float(worst.get('pnl', 0) or 0):,.4f}
 
-※ v4.3.3은 BingX 체결/실현손익 데이터를 우선 사용합니다. 거래소가 해당 값을 반환하지 않는 경우에만 참고가 기준 fallback을 사용합니다."""
+※ v4.3.2는 거래소 체결 평균가가 아니라 진입/청산 참고가 기준 추정치입니다.
+다음 버전에서 BingX 체결내역 기반으로 더 정교화합니다."""
+
+
+def live_profit_message(stats):
+    best = stats.get("best") or {}
+    worst = stats.get("worst") or {}
+
+    best_text = "없음"
+    if best:
+        best_text = f"{best.get('symbol') or best.get('base')} {float(best.get('pnl_pct', 0) or 0):+.2f}% / {float(best.get('pnl', 0) or 0):+.4f} USDT"
+
+    worst_text = "없음"
+    if worst:
+        worst_text = f"{worst.get('symbol') or worst.get('base')} {float(worst.get('pnl_pct', 0) or 0):+.2f}% / {float(worst.get('pnl', 0) or 0):+.4f} USDT"
+
+    return f"""💵 내 수익 현황
+
+• 총 누적 수익: {float(stats.get('total_pnl', 0) or 0):+.4f} USDT
+• 승률: {float(stats.get('win_rate', 0) or 0):.1f}% ({int(stats.get('wins', 0))}승 / {int(stats.get('losses', 0))}패)
+• 정산 완료: {int(stats.get('total', 0))}건 | 보유 중: {int(stats.get('holding', 0))}건
+
+• 이번 달: {float(stats.get('month_pnl', 0) or 0):+.4f} USDT
+• 이번 주: {float(stats.get('week_pnl', 0) or 0):+.4f} USDT
+
+🏆 최고 거래: {best_text}
+💔 최대 손실: {worst_text}"""
+
+def live_entry_success_message(pos, order_result, signal=None):
+    e = pos.get("entries", [{}])[-1]
+    sig = signal or pos.get("signal") or {}
+    return f"""🚀 실전 자동 진입 완료
+
+거래소 : BingX Futures
+전략 : Morning Short
+종목 : {pos.get('base')}
+심볼 : {pos.get('symbol')}
+방향 : SHORT
+레버리지 : 4배
+
+진입 차수 : {e.get('level')}차
+증거금 : ${float(e.get('margin', 0) or 0):,.4f}
+주문가치 : ${float(e.get('order_value_usdt', 0) or 0):,.4f}
+체결 평균가 : {e.get('price')}
+체결 수량 : {e.get('qty')}
+
+전략 조건:
+✅ 15분봉 O→C +{float(sig.get('change_pct', 0) or 0):.2f}%
+✅ 업비트+빗썸 교차상장
+✅ BingX 선물 상장
+✅ Top1 선정
+
+TP : 레버리지 기준 +12%
+SL : 16:00 이후 -30%
+추가진입 : 불리하게 +3% 이동 시 2차/3차"""
+
+def live_add_success_message(pos, order_result, level):
+    e = pos.get("entries", [{}])[-1]
+    return f"""⚠️ 실전 추가진입 완료
+
+종목 : {pos.get('base')}
+진입 차수 : {level}차
+체결가 : {e.get('price')}
+수량 : {e.get('qty')}
+증거금 : ${float(e.get('margin', 0) or 0):,.4f}
+
+현재 평균가 : {float(pos.get('avg_price', 0) or 0):.8f}
+총 수량 : {float(pos.get('qty', 0) or 0):,.6f}"""
+
+def live_close_success_message(pos):
+    return f"""✅ 실전 포지션 청산 완료
+
+종목 : {pos.get('base')}
+심볼 : {pos.get('symbol')}
+
+평균 진입가 : {float(pos.get('avg_price', 0) or 0):.8f}
+청산가 : {pos.get('close_price')}
+수익률 : {float(pos.get('pnl_pct', 0) or 0):+.2f}%
+실현손익 : {float(pos.get('realized_pnl', 0) or 0):+.6f} USDT
+수수료 : {float(pos.get('fee', 0) or 0):.6f} USDT
+손익 출처 : {pos.get('realized_pnl_source')}
+
+거래내역/수익현황에 반영했습니다."""
+
+def live_entry_error_message(error):
+    return f"""❌ 실전 자동 진입 실패
+
+{error}
+
+안전상 이번 신호는 진입하지 않았습니다.
+Railway 로그와 BingX 포지션을 확인하세요."""
+
+def live_skip_message(reason):
+    return f"""⚠️ 실전 진입 스킵
+
+사유:
+{reason}
+
+안전상 주문하지 않았습니다."""

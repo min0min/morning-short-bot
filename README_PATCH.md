@@ -1,23 +1,55 @@
-# v4.3.3 BingX Fills + Fixed Leverage Patch
+# v4.4 Live Strategy Engine Patch
 
-덮어쓸 파일:
+덮어쓸/추가 파일:
 - config.py
-- bingx.py
 - storage.py
 - messages.py
 - telegram_bot.py
+- scheduler.py
+
+중요:
+- 이 버전부터 09:15 전략 신호가 실전 BingX 주문으로 연결됩니다.
+- 실전입니다. 반드시 BingX 포지션 화면을 같이 확인하세요.
 
 핵심 반영:
-- 버전: FINAL v4.3.3 FILLS-LEVERAGE
-- 실전 레버리지 4배 고정 인지 및 반영
-- 실전 주문 전 BingX 레버리지 4배 설정 시도
-- 주문 성공 후 BingX 주문 상세/체결내역 조회
-- 체결 평균가와 실제 체결수량 우선 저장
-- 청산 후 BingX 체결/실현손익 데이터 우선 사용
-- 거래소가 체결/실현손익을 반환하지 않는 경우에만 참고가 fallback
-- 수익현황/거래내역에 체결 기반 값 반영
+- 버전: FINAL v4.4 LIVE-STRATEGY
+- 레버리지 4배 고정
+- 내 상태 UI 개선:
+  - 거래소: BingX Futures
+  - API 등록 여부
+  - 트레이딩 활성화 여부
+  - 시드 방식
+  - 선물 잔고
+  - 레버리지 4배 고정
+  - 가입일
+  - 오픈 포지션
+- 수익 현황 UI 개선:
+  - 총 누적 수익
+  - 승률
+  - 정산 완료/보유중
+  - 이번 달/이번 주
+  - 최고 거래/최대 손실
+- 09:15 자동 실전 진입:
+  - Bitget 선물 전체 스캔
+  - 업비트 + 빗썸 교차상장
+  - 마감 15분봉 O→C +3% 이상
+  - Top1 선정
+  - BingX 선물 상장 자동 확인
+  - BingX 상장 O → SHORT 실전 진입
+  - BingX 상장 X → 진입 없음
+- 잔고 자동조회 기반 비중:
+  - 1차 증거금: 선물 사용 가능 잔고의 2%
+  - 2차 증거금: 1%
+  - 3차 증거금: 1%
+  - 주문가치 = 증거금 × 4배
+- 30초 실전 포지션 감시
+- TP: 레버리지 기준 +12%
+- SL: 16:00 이후 레버리지 기준 -30%
+- 추가진입: 불리하게 약 +3% 이동 시 2차/3차
 
 주의:
-- BingX 계정 모드/엔드포인트 차이에 따라 레버리지 설정 API 또는 체결내역 API가 실패할 수 있습니다.
-- 이 경우 주문 자체는 성공할 수 있으며, 봇은 가능한 데이터로 fallback합니다.
-- Withdraw / Universal Transfer 권한은 계속 OFF 유지.
+- LIVE_STRATEGY_ENABLED=True 입니다.
+- 트레이딩 시작 버튼을 누르면 다음 09:15부터 실전 진입 조건이 충족될 때 주문이 나갈 수 있습니다.
+- API 권한: Read + Perpetual Futures Trading ON
+- Withdraw / Universal Transfer OFF 필수
+- 하루 1회 신규 진입 제한 적용

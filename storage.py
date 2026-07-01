@@ -23,6 +23,7 @@ BINGX_API_PATH = os.path.join(DATA_DIR, "bingx_api.json")
 
 DEFAULT_STATE = {
     "running": False,
+    "joined_at": None,
     "seed_usdt": PAPER_SEED_USDT,
     "paper_balance": PAPER_SEED_USDT,
     "open_position": None,
@@ -32,6 +33,9 @@ DEFAULT_STATE = {
     "api_tested": False,
     "approval_status": "PAPER_ONLY",
     "real_test_position": None,
+    "live_position": None,
+    "live_daily_entry_date": None,
+    "live_daily_entry_count": 0,
     "real_test_stats": {"total": 0, "wins": 0, "losses": 0, "total_pnl": 0.0, "best": None, "worst": None},
     "settings": {
         "entry_1_pct": DEFAULT_ENTRY_1_PCT,
@@ -69,6 +73,10 @@ def load_state():
         if k not in state["settings"]:
             state["settings"][k] = v
             changed = True
+
+    if not state.get("joined_at"):
+        state["joined_at"] = datetime.now().date().isoformat()
+        changed = True
 
     if changed:
         save_state(state)
@@ -286,28 +294,19 @@ def is_seed_auto():
 def save_real_test_open(order_result):
     """
     실전 주문 테스트 OPEN 기록.
-    v4.3.3: 체결 평균가/실제 체결수량 우선 저장.
+    실제 전략 거래와 구분하기 위해 reason=REAL_TEST_OPEN 사용.
     """
     state = load_state()
-
-    fill = order_result.get("fill") or {}
-    filled_avg = fill.get("avg_price") or order_result.get("filled_avg_price") or order_result.get("price_ref")
-    executed_qty = fill.get("executed_qty") or order_result.get("executed_qty") or order_result.get("qty")
-
     pos = {
         "mode": "REAL_TEST",
         "base": str(order_result.get("symbol", "")).replace("-USDT", "").replace("USDT", ""),
         "symbol": order_result.get("symbol"),
         "side": "SHORT",
-        "leverage": int(order_result.get("leverage", 4) or 4),
-        "qty": float(executed_qty or 0),
-        "entry_price": float(filled_avg or 0),
-        "entry_price_source": fill.get("source", "fallback"),
+        "qty": float(order_result.get("qty", 0) or 0),
+        "entry_price": float(order_result.get("price_ref", 0) or 0),
         "requested_usdt": float(order_result.get("margin_usdt", 0) or 0),
         "actual_notional_usdt": float(order_result.get("actual_notional_usdt", 0) or 0),
-        "order_id": order_result.get("order_id"),
         "order_raw": order_result.get("raw"),
-        "fill_raw": fill.get("raw"),
         "opened_at": datetime.now().isoformat(),
     }
     state["real_test_position"] = pos
@@ -318,15 +317,14 @@ def save_real_test_open(order_result):
         "reason": "REAL_TEST_OPEN",
         "position": pos,
     })
-    print(f"[REAL TEST OPEN SAVED] {pos['symbol']} qty={pos['qty']} entry={pos['entry_price']} lev={pos['leverage']}")
+    print(f"[REAL TEST OPEN SAVED] {pos['symbol']} qty={pos['qty']}")
     return pos
-
 
 def save_real_test_close(close_result, close_price=None):
     """
     실전 주문 테스트 CLOSE 기록.
-    v4.3.3: BingX 체결 평균가/realizedPnl 우선 사용.
-    없으면 참고가 기준 fallback.
+    BingX 실현손익 조회는 다음 단계에서 정교화하고,
+    v4.3.2에서는 entry/close 기준 추정 PnL을 저장한다.
     """
     state = load_state()
     pos = state.get("real_test_position")
@@ -337,50 +335,32 @@ def save_real_test_close(close_result, close_price=None):
             "base": str(close_result.get("symbol", "")).replace("-USDT", "").replace("USDT", ""),
             "symbol": close_result.get("symbol"),
             "side": "SHORT",
-            "leverage": 4,
             "qty": float(close_result.get("qty", 0) or 0),
             "entry_price": 0.0,
             "opened_at": None,
         }
 
-    fill = close_result.get("fill") or {}
-    fill_avg = fill.get("avg_price") or close_result.get("filled_avg_price")
-    fill_qty = fill.get("executed_qty") or close_result.get("executed_qty")
-
-    qty = float(fill_qty or close_result.get("qty", pos.get("qty", 0)) or 0)
+    qty = float(close_result.get("qty", pos.get("qty", 0)) or 0)
     entry = float(pos.get("entry_price", 0) or 0)
-    close = float(fill_avg or close_price or 0)
+    close = float(close_price or 0)
 
-    realized_from_exchange = close_result.get("realized_pnl")
-    if realized_from_exchange is None:
-        realized_from_exchange = fill.get("realized_pnl")
+    realized_pnl = 0.0
+    pnl_pct = 0.0
 
-    if realized_from_exchange is not None:
-        realized_pnl = float(realized_from_exchange)
-        source = fill.get("source", "bingx_realized_pnl")
-    else:
-        # SHORT PnL fallback
-        realized_pnl = (entry - close) * qty if qty > 0 and entry > 0 and close > 0 else 0.0
-        source = "fallback_entry_close_price"
-
-    notional = entry * qty
-    pnl_pct = (realized_pnl / notional * 100) if notional else 0.0
-
-    fee = float(close_result.get("fee") if close_result.get("fee") is not None else (fill.get("fee") or 0.0))
+    if qty > 0 and entry > 0 and close > 0:
+        # SHORT PnL approximation
+        realized_pnl = (entry - close) * qty
+        notional = entry * qty
+        pnl_pct = (realized_pnl / notional * 100) if notional else 0.0
 
     closed_pos = dict(pos)
     closed_pos.update({
         "qty": qty,
         "close_price": close,
-        "close_price_source": fill.get("source", "fallback"),
         "realized_pnl": realized_pnl,
-        "realized_pnl_source": source,
-        "fee": fee,
         "pnl_pct": pnl_pct,
         "close_reason": "REAL_TEST_CLOSE",
-        "close_order_id": close_result.get("order_id"),
         "close_raw": close_result.get("raw"),
-        "close_fill_raw": fill.get("raw"),
         "closed_at": datetime.now().isoformat(),
     })
 
@@ -415,9 +395,8 @@ def save_real_test_close(close_result, close_price=None):
         "reason": "REAL_TEST_CLOSE",
         "position": closed_pos,
     })
-    print(f"[REAL TEST CLOSE SAVED] {closed_pos.get('symbol')} pnl={realized_pnl} source={source}")
+    print(f"[REAL TEST CLOSE SAVED] {closed_pos.get('symbol')} pnl={realized_pnl}")
     return closed_pos
-
 
 def get_real_test_stats():
     state = load_state()
@@ -427,3 +406,235 @@ def get_real_test_stats():
     win_rate = (wins / total * 100) if total else 0.0
     stats["win_rate"] = win_rate
     return stats
+
+
+def reset_live_daily_if_needed(state=None):
+    today = datetime.now().date().isoformat()
+    if state is None:
+        state = load_state()
+    if state.get("live_daily_entry_date") != today:
+        state["live_daily_entry_date"] = today
+        state["live_daily_entry_count"] = 0
+    return state
+
+def can_live_enter_today():
+    state = reset_live_daily_if_needed(load_state())
+    return int(state.get("live_daily_entry_count", 0) or 0) < 1
+
+def save_live_entry(order_result, signal=None, entry_level=1, margin_usdt=0.0, order_value_usdt=0.0):
+    state = reset_live_daily_if_needed(load_state())
+
+    fill = order_result.get("fill") or {}
+    filled_avg = fill.get("avg_price") or order_result.get("filled_avg_price") or order_result.get("price_ref")
+    executed_qty = fill.get("executed_qty") or order_result.get("executed_qty") or order_result.get("qty")
+
+    base = str(order_result.get("symbol", "")).replace("-USDT", "").replace("USDT", "")
+    existing = state.get("live_position")
+
+    entry = {
+        "level": entry_level,
+        "qty": float(executed_qty or 0),
+        "price": float(filled_avg or 0),
+        "margin": float(margin_usdt or 0),
+        "order_value_usdt": float(order_value_usdt or order_result.get("actual_notional_usdt", 0) or 0),
+        "order_id": order_result.get("order_id"),
+        "raw": order_result.get("raw"),
+        "fill_raw": fill.get("raw"),
+        "created_at": datetime.now().isoformat(),
+    }
+
+    if existing:
+        entries = existing.get("entries", [])
+        entries.append(entry)
+        total_qty = sum(float(e.get("qty", 0) or 0) for e in entries)
+        weighted = sum(float(e.get("qty", 0) or 0) * float(e.get("price", 0) or 0) for e in entries)
+        avg_price = weighted / total_qty if total_qty else 0.0
+        total_margin = sum(float(e.get("margin", 0) or 0) for e in entries)
+        total_order_value = sum(float(e.get("order_value_usdt", 0) or 0) for e in entries)
+        pos = existing
+        pos.update({
+            "entries": entries,
+            "qty": total_qty,
+            "avg_price": avg_price,
+            "total_margin": total_margin,
+            "total_order_value_usdt": total_order_value,
+            "updated_at": datetime.now().isoformat(),
+        })
+    else:
+        pos = {
+            "mode": "LIVE",
+            "base": base,
+            "symbol": order_result.get("symbol"),
+            "side": "SHORT",
+            "leverage": int(order_result.get("leverage", 4) or 4),
+            "entries": [entry],
+            "qty": float(entry["qty"]),
+            "avg_price": float(entry["price"]),
+            "total_margin": float(margin_usdt or 0),
+            "total_order_value_usdt": float(order_value_usdt or order_result.get("actual_notional_usdt", 0) or 0),
+            "signal": signal,
+            "opened_at": datetime.now().isoformat(),
+            "max_pnl_pct": 0.0,
+            "min_pnl_pct": 0.0,
+        }
+        state["live_daily_entry_count"] = int(state.get("live_daily_entry_count", 0) or 0) + 1
+
+    state["live_position"] = pos
+    save_state(state)
+
+    append_trade({
+        "type": "ENTRY",
+        "reason": "LIVE_STRATEGY_ENTRY" if entry_level == 1 else "LIVE_STRATEGY_ADD",
+        "position": pos,
+    })
+    print(f"[LIVE ENTRY SAVED] {pos['symbol']} level={entry_level} qty={pos['qty']} avg={pos['avg_price']}")
+    return pos
+
+def update_live_position_metrics(current_price):
+    state = load_state()
+    pos = state.get("live_position")
+    if not pos:
+        return None
+
+    avg = float(pos.get("avg_price", 0) or 0)
+    lev = float(pos.get("leverage", 4) or 4)
+    if avg <= 0 or current_price <= 0:
+        return pos
+
+    # SHORT leveraged pnl %
+    pnl_pct = ((avg - float(current_price)) / avg) * 100 * lev
+    pos["last_price"] = float(current_price)
+    pos["last_pnl_pct"] = pnl_pct
+    pos["max_pnl_pct"] = max(float(pos.get("max_pnl_pct", pnl_pct) or pnl_pct), pnl_pct)
+    pos["min_pnl_pct"] = min(float(pos.get("min_pnl_pct", pnl_pct) or pnl_pct), pnl_pct)
+    pos["updated_at"] = datetime.now().isoformat()
+    state["live_position"] = pos
+    save_state(state)
+    return pos
+
+def should_live_add_entry(current_price):
+    state = load_state()
+    pos = state.get("live_position")
+    if not pos:
+        return None
+    entries = pos.get("entries", [])
+    if len(entries) >= 3:
+        return None
+
+    avg = float(pos.get("avg_price", 0) or 0)
+    pct = float(state.get("settings", {}).get("add_entry_price_move_pct", 3.0) or 3.0)
+    if avg <= 0:
+        return None
+
+    # SHORT adverse move: price rises by pct from avg
+    if float(current_price) >= avg * (1 + pct / 100):
+        return len(entries) + 1
+    return None
+
+def save_live_close(close_result, close_price=None):
+    state = load_state()
+    pos = state.get("live_position")
+    if not pos:
+        return None
+
+    fill = close_result.get("fill") or {}
+    fill_avg = fill.get("avg_price") or close_result.get("filled_avg_price")
+    close = float(fill_avg or close_price or pos.get("last_price") or 0)
+    qty = float(fill.get("executed_qty") or close_result.get("executed_qty") or close_result.get("qty") or pos.get("qty") or 0)
+
+    realized_from_exchange = close_result.get("realized_pnl")
+    if realized_from_exchange is None:
+        realized_from_exchange = fill.get("realized_pnl")
+
+    entry = float(pos.get("avg_price", 0) or 0)
+    if realized_from_exchange is not None:
+        realized_pnl = float(realized_from_exchange)
+        pnl_source = fill.get("source", "bingx_realized_pnl")
+    else:
+        realized_pnl = (entry - close) * qty if entry > 0 and close > 0 and qty > 0 else 0.0
+        pnl_source = "fallback_entry_close_price"
+
+    notional = entry * qty
+    pnl_pct = (realized_pnl / notional * 100 * float(pos.get("leverage", 4) or 4)) if notional else 0.0
+    fee = float(close_result.get("fee") if close_result.get("fee") is not None else (fill.get("fee") or 0.0))
+
+    closed = dict(pos)
+    closed.update({
+        "qty": qty,
+        "close_price": close,
+        "realized_pnl": realized_pnl,
+        "realized_pnl_source": pnl_source,
+        "fee": fee,
+        "pnl_pct": pnl_pct,
+        "close_order_id": close_result.get("order_id"),
+        "close_reason": "LIVE_CLOSE",
+        "close_raw": close_result.get("raw"),
+        "close_fill_raw": fill.get("raw"),
+        "closed_at": datetime.now().isoformat(),
+    })
+
+    state["live_position"] = None
+    save_state(state)
+
+    append_trade({
+        "type": "CLOSE",
+        "reason": "LIVE_STRATEGY_CLOSE",
+        "position": closed,
+    })
+    print(f"[LIVE CLOSE SAVED] {closed.get('symbol')} pnl={realized_pnl} pct={pnl_pct}")
+    return closed
+
+def get_live_trade_stats():
+    trades = load_trades()
+    closed = [t for t in trades if t.get("type") == "CLOSE" and t.get("reason") in ("LIVE_STRATEGY_CLOSE", "REAL_TEST_CLOSE")]
+    total = len(closed)
+    wins = losses = 0
+    total_pnl = 0.0
+    best = None
+    worst = None
+
+    now = datetime.now()
+    month_pnl = 0.0
+    week_pnl = 0.0
+
+    for t in closed:
+        p = t.get("position", {})
+        pnl = float(p.get("realized_pnl", 0) or 0)
+        pct = float(p.get("pnl_pct", 0) or 0)
+        total_pnl += pnl
+        if pnl > 0:
+            wins += 1
+        elif pnl < 0:
+            losses += 1
+
+        try:
+            created = datetime.fromisoformat(t.get("created_at"))
+        except Exception:
+            created = now
+        if created.year == now.year and created.month == now.month:
+            month_pnl += pnl
+        if (now - created).days <= 7:
+            week_pnl += pnl
+
+        item = {"base": p.get("base"), "symbol": p.get("symbol"), "pnl": pnl, "pnl_pct": pct}
+        if best is None or pct > float(best.get("pnl_pct", -999999)):
+            best = item
+        if worst is None or pct < float(worst.get("pnl_pct", 999999)):
+            worst = item
+
+    state = load_state()
+    holding = 1 if state.get("live_position") else 0
+    win_rate = (wins / total * 100) if total else 0.0
+
+    return {
+        "total": total,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": win_rate,
+        "total_pnl": total_pnl,
+        "month_pnl": month_pnl,
+        "week_pnl": week_pnl,
+        "holding": holding,
+        "best": best,
+        "worst": worst,
+    }
