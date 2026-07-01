@@ -180,3 +180,162 @@ async def is_bingx_futures_listed(base_or_symbol: str):
         "raw_symbol": None,
         "contract": None,
     }
+
+
+async def _bingx_signed_request(api_key: str, api_secret: str, method: str, path: str, params: dict | None = None):
+    """
+    Signed request for BingX private endpoints.
+    Order endpoints use signed query + X-BX-APIKEY.
+    """
+    if not api_key or not api_secret:
+        raise ValueError("BingX API Key/Secret이 비어있습니다.")
+
+    query = _build_signed_query(params or {}, api_secret)
+    url = f"{BINGX_BASE_URL}{path}?{query}"
+    headers = {"X-BX-APIKEY": api_key}
+
+    timeout = aiohttp.ClientTimeout(total=20)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        request_method = session.post if method.upper() == "POST" else session.get
+        async with request_method(url, headers=headers) as resp:
+            text = await resp.text()
+            try:
+                data = await resp.json()
+            except Exception:
+                raise RuntimeError(f"BingX 응답 JSON 파싱 실패: HTTP {resp.status} / {text[:300]}")
+
+            if resp.status >= 400:
+                raise RuntimeError(f"BingX HTTP 오류: {resp.status} / {data}")
+
+            code = str(data.get("code", "0"))
+            if code not in ("0", "200"):
+                raise RuntimeError(f"BingX API 오류: code={data.get('code')} msg={data.get('msg')}")
+
+            return data
+
+async def get_bingx_symbol_price(symbol: str):
+    symbol = normalize_bingx_symbol(symbol)
+    data = await _bingx_public_get("/openApi/swap/v2/quote/price", {"symbol": symbol})
+    obj = data.get("data", data)
+
+    if isinstance(obj, dict):
+        for key in ["price", "lastPrice", "last", "markPrice"]:
+            if obj.get(key) is not None:
+                return float(obj[key])
+
+    if isinstance(obj, list) and obj:
+        item = obj[0]
+        for key in ["price", "lastPrice", "last", "markPrice"]:
+            if item.get(key) is not None:
+                return float(item[key])
+
+    raise RuntimeError(f"BingX 가격을 찾지 못했습니다: {data}")
+
+def _round_qty(qty: float) -> float:
+    # 대부분 알트 테스트에 충분한 보수적 반올림.
+    # 실제 주문 단계에서는 contract precision 기반 보정으로 업그레이드 예정.
+    if qty >= 100:
+        return round(qty, 0)
+    if qty >= 10:
+        return round(qty, 1)
+    if qty >= 1:
+        return round(qty, 2)
+    if qty >= 0.1:
+        return round(qty, 3)
+    if qty >= 0.01:
+        return round(qty, 4)
+    return round(qty, 6)
+
+async def calculate_market_qty_by_usdt(symbol: str, margin_usdt: float):
+    symbol = normalize_bingx_symbol(symbol)
+    price = await get_bingx_symbol_price(symbol)
+    if price <= 0:
+        raise RuntimeError("가격이 0 이하입니다.")
+    qty = float(margin_usdt) / price
+    qty = _round_qty(qty)
+    if qty <= 0:
+        raise RuntimeError("계산된 주문 수량이 0 이하입니다.")
+    return {
+        "symbol": symbol,
+        "price": price,
+        "qty": qty,
+        "margin_usdt": float(margin_usdt),
+    }
+
+async def place_short_market_order(api_key: str, api_secret: str, symbol: str, margin_usdt: float):
+    """
+    v4.3 테스트용: market SHORT open.
+    기본값은 1 USDT 수준 테스트.
+    """
+    calc = await calculate_market_qty_by_usdt(symbol, margin_usdt)
+    params = {
+        "symbol": calc["symbol"],
+        "side": "SELL",
+        "positionSide": "SHORT",
+        "type": "MARKET",
+        "quantity": calc["qty"],
+    }
+    data = await _bingx_signed_request(api_key, api_secret, "POST", "/openApi/swap/v2/trade/order", params)
+    return {
+        "ok": True,
+        "action": "OPEN_SHORT",
+        "symbol": calc["symbol"],
+        "qty": calc["qty"],
+        "price_ref": calc["price"],
+        "margin_usdt": calc["margin_usdt"],
+        "raw": data,
+    }
+
+def _extract_short_position_qty(positions_payload):
+    positions = positions_payload.get("positions", positions_payload)
+    if isinstance(positions, dict):
+        positions = [positions]
+    if not isinstance(positions, list):
+        return 0.0, None
+
+    for p in positions:
+        if not isinstance(p, dict):
+            continue
+        side = str(p.get("positionSide") or p.get("side") or "").upper()
+        if side and side != "SHORT":
+            continue
+        for key in ["positionAmt", "availableAmt", "quantity", "qty", "positionAmount", "position"]:
+            val = p.get(key)
+            if val is None:
+                continue
+            try:
+                qty = abs(float(val))
+                if qty > 0:
+                    return qty, p
+            except Exception:
+                continue
+    return 0.0, None
+
+async def close_short_market_position(api_key: str, api_secret: str, symbol: str):
+    """
+    v4.3 테스트용: 현재 SHORT 포지션 수량을 조회해서 market BUY close.
+    """
+    symbol = normalize_bingx_symbol(symbol)
+    positions = await get_bingx_positions(api_key, api_secret, symbol)
+    qty, pos = _extract_short_position_qty(positions)
+
+    if qty <= 0:
+        raise RuntimeError(f"{symbol} SHORT 포지션 수량을 찾지 못했습니다. 이미 청산되었거나 포지션 조회 구조 확인 필요.")
+
+    qty = _round_qty(qty)
+    params = {
+        "symbol": symbol,
+        "side": "BUY",
+        "positionSide": "SHORT",
+        "type": "MARKET",
+        "quantity": qty,
+    }
+    data = await _bingx_signed_request(api_key, api_secret, "POST", "/openApi/swap/v2/trade/order", params)
+    return {
+        "ok": True,
+        "action": "CLOSE_SHORT",
+        "symbol": symbol,
+        "qty": qty,
+        "position": pos,
+        "raw": data,
+    }

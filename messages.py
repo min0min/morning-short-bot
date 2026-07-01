@@ -336,3 +336,79 @@ BingX 상장 여부 확인 중 오류가 발생했습니다.
 
 오류:
 {error}"""
+
+
+def real_order_test_warning_message(symbol="DOGE-USDT", margin_usdt=1.0):
+    return f"""🧪 실전 주문 테스트
+
+이 기능은 실제 BingX Futures 계정에 주문을 넣습니다.
+
+테스트 내용:
+거래소 : BingX Futures
+심볼 : {symbol}
+방향 : SHORT
+주문 방식 : Market
+테스트 금액 : 약 ${margin_usdt:.2f}
+
+주의:
+✅ 실전 주문입니다.
+✅ 수수료/슬리피지가 발생할 수 있습니다.
+✅ Trade 권한이 켜진 API가 필요합니다.
+❌ 자동 전략 진입은 아직 연결하지 않습니다.
+
+진행하시겠습니까?"""
+
+def real_order_success_message(result):
+    raw = result.get("raw", {})
+    order_id = "-"
+    data = raw.get("data")
+    if isinstance(data, dict):
+        order_id = data.get("orderId") or data.get("orderID") or data.get("id") or "-"
+    return f"""✅ 실전 테스트 주문 성공
+
+거래소 : BingX Futures
+동작 : SHORT 진입
+심볼 : {result.get('symbol')}
+수량 : {result.get('qty')}
+참고가격 : {result.get('price_ref')}
+테스트 금액 : ${result.get('margin_usdt')}
+
+Order ID : {order_id}
+
+다음 단계:
+🧪 실전 테스트 청산 버튼으로 포지션 청산을 확인하세요."""
+
+def real_order_fail_message(error):
+    return f"""❌ 실전 테스트 주문 실패
+
+{error}
+
+확인할 것:
+1. BingX API에 Perpetual Futures Trading 권한이 켜져 있는지
+2. 출금 권한은 꺼져 있는지
+3. Futures 계정에 사용 가능 USDT가 있는지
+4. 최소 주문 수량/금액 조건을 충족하는지"""
+
+def real_close_success_message(result):
+    raw = result.get("raw", {})
+    order_id = "-"
+    data = raw.get("data")
+    if isinstance(data, dict):
+        order_id = data.get("orderId") or data.get("orderID") or data.get("id") or "-"
+    return f"""✅ 실전 테스트 청산 성공
+
+거래소 : BingX Futures
+동작 : SHORT 청산
+심볼 : {result.get('symbol')}
+청산 수량 : {result.get('qty')}
+
+Order ID : {order_id}
+
+실전 주문 엔진 1차 테스트 완료."""
+
+def real_close_fail_message(error):
+    return f"""❌ 실전 테스트 청산 실패
+
+{error}
+
+포지션이 남아있다면 BingX 앱에서 직접 확인 후 수동 청산하세요."""

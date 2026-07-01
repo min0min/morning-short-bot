@@ -1,7 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
-from config import TELEGRAM_BOT_TOKEN, BOT_VERSION, BOT_VERSION
+from config import TELEGRAM_BOT_TOKEN, BOT_VERSION, REAL_TEST_SYMBOL, REAL_TEST_MARGIN_USDT, BOT_VERSION
 from storage import load_state, save_state, load_trades, calc_trade_stats, save_active_chat_id, save_bingx_api, mark_bingx_api_tested, set_seed_auto_mode, set_seed_fixed_mode, load_bingx_api
 from messages import (
     main_menu_text,
@@ -15,12 +15,17 @@ from messages import (
     seed_setting_message,
     bingx_connection_success_message,
     bingx_connection_fail_message,
+    real_order_test_warning_message,
+    real_order_success_message,
+    real_order_fail_message,
+    real_close_success_message,
+    real_close_fail_message,
 )
 from exchanges import get_crosslisted_futures_snapshot, get_exchange_debug_text
 from strategy import create_position
 from backtest import run_date_backtest, run_recent_days_backtest
 from scanner import scan_latest_closed_15m_oc
-from bingx import test_bingx_read_connection, get_bingx_swap_balance
+from bingx import test_bingx_read_connection, get_bingx_swap_balance, place_short_market_order, close_short_market_position
 
 WAITING_SEED = "waiting_seed"
 WAITING_BACKTEST_DATE = "waiting_backtest_date"
@@ -40,6 +45,7 @@ def main_keyboard():
         [InlineKeyboardButton("🧪 날짜 백테스트", callback_data="date_backtest")],
         [InlineKeyboardButton("🧪 최근 7일 자동 검증", callback_data="recent7_backtest")],
         [InlineKeyboardButton("🔍 거래소 디버그", callback_data="debug_exchange")],
+        [InlineKeyboardButton("🧪 실전 주문 테스트", callback_data="real_order_test"), InlineKeyboardButton("🧪 실전 테스트 청산", callback_data="real_close_test")],
         [InlineKeyboardButton("📢 안내사항", callback_data="notice")],
     ]
     return InlineKeyboardMarkup(rows)
@@ -48,6 +54,13 @@ def main_keyboard():
 def api_agree_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ 동의하고 등록", callback_data="api_agree")],
+        [InlineKeyboardButton("❌ 취소", callback_data="cancel_to_menu")],
+    ])
+
+
+def real_order_confirm_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ 1USDT SHORT 테스트 실행", callback_data="real_order_confirm")],
         [InlineKeyboardButton("❌ 취소", callback_data="cancel_to_menu")],
     ])
 
@@ -184,6 +197,61 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await query.edit_message_text(
                 f"❌ 거래소 디버그 실패\n\n{type(e).__name__}: {e}\n\n{get_exchange_debug_text()}",
+                reply_markup=main_keyboard()
+            )
+
+    elif data == "real_order_test":
+        await query.edit_message_text(
+            real_order_test_warning_message(REAL_TEST_SYMBOL, REAL_TEST_MARGIN_USDT),
+            reply_markup=real_order_confirm_keyboard()
+        )
+
+    elif data == "real_order_confirm":
+        api = load_bingx_api()
+        if not api:
+            await query.edit_message_text(
+                "❌ BingX API가 등록되어 있지 않습니다.\n먼저 🔑 API 키 등록을 진행해주세요.",
+                reply_markup=main_keyboard()
+            )
+            return
+
+        await query.edit_message_text(
+            f"🧪 실전 테스트 주문 전송중...\n심볼: {REAL_TEST_SYMBOL}\n금액: ${REAL_TEST_MARGIN_USDT}"
+        )
+        try:
+            result = await place_short_market_order(
+                api["api_key"],
+                api["api_secret"],
+                REAL_TEST_SYMBOL,
+                REAL_TEST_MARGIN_USDT,
+            )
+            await query.message.reply_text(real_order_success_message(result), reply_markup=main_keyboard())
+        except Exception as e:
+            await query.message.reply_text(
+                real_order_fail_message(f"{type(e).__name__}: {e}"),
+                reply_markup=main_keyboard()
+            )
+
+    elif data == "real_close_test":
+        api = load_bingx_api()
+        if not api:
+            await query.edit_message_text(
+                "❌ BingX API가 등록되어 있지 않습니다.\n먼저 🔑 API 키 등록을 진행해주세요.",
+                reply_markup=main_keyboard()
+            )
+            return
+
+        await query.edit_message_text(f"🧪 실전 테스트 포지션 청산 시도중...\n심볼: {REAL_TEST_SYMBOL}")
+        try:
+            result = await close_short_market_position(
+                api["api_key"],
+                api["api_secret"],
+                REAL_TEST_SYMBOL,
+            )
+            await query.message.reply_text(real_close_success_message(result), reply_markup=main_keyboard())
+        except Exception as e:
+            await query.message.reply_text(
+                real_close_fail_message(f"{type(e).__name__}: {e}"),
                 reply_markup=main_keyboard()
             )
 

@@ -1,26 +1,30 @@
-# v4.2 Auto BingX Listing Filter Patch
+# v4.3 Real Order Test Engine Patch
 
 덮어쓸/추가 파일:
 - config.py
 - bingx.py
-- scheduler.py
-- messages.py
 - telegram_bot.py
+- messages.py
 
 핵심 기능:
-- 버전: FINAL v4.2 AUTO-BINGX-FILTER
-- 수동 BingX 상장 체크 버튼 없이 자동으로 상장 여부 확인
-- 09:15 전략 신호 발생 후 자동으로 BingX USDT-M 선물 상장 여부 확인
-- BingX 상장 O → PAPER 진입 진행
-- BingX 상장 X → 진입하지 않고 “BingX 선물 미상장 → 진입 없음” 알림
-- BingX 상장 확인 오류 → 안전상 진입 보류
-- “가상 수익 현황” → “수익 현황”
-- “모의 시작/중지” → “트레이딩 시작/중지”
+- 버전: FINAL v4.3 REAL-ORDER-TEST
+- 실전 주문 테스트 버튼 추가
+- 실전 테스트 청산 버튼 추가
+- 기본 테스트 심볼: DOGE-USDT
+- 기본 테스트 금액: 1 USDT
+- 실제 BingX Futures Market SHORT 주문 전송
+- 현재 SHORT 포지션 조회 후 Market BUY 청산 테스트
 
-전략 기조 유지:
-- Bitget 선물 전체 스캔
-- 업비트 + 빗썸 교차상장 필터
-- 09:15 마감 15분봉 O→C +3%
-- 조건 충족 후보 중 상승률 1등만 선정
-- BingX 상장된 경우만 진입 후보
-- 현재 v4.2는 아직 실전 주문 없음, PAPER 진입만 수행
+중요:
+- 이 버전은 전략 자동 실전 진입이 아님
+- 버튼을 눌러 확인한 경우에만 실제 주문 시도
+- BingX API에 Perpetual Futures Trading 권한이 필요
+- Withdraw / Transfer 권한은 절대 켜지 말 것
+- 최초 테스트는 반드시 1 USDT 수준으로만 진행
+
+다음 단계:
+- 주문 성공 확인
+- 포지션 생성 확인
+- 청산 성공 확인
+- 거래내역 저장/실전 TP/SL 연결
+- 이후 09:15 전략 자동 실전 주문 연결
