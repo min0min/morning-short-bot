@@ -700,3 +700,294 @@ def get_admin_user_snapshot():
         "stats": stats,
         "api": load_bingx_api() is not None,
     }
+
+
+# =========================
+# v4.6 TRUE MULTIUSER LAYER
+# =========================
+USERS_PATH = os.path.join(DATA_DIR, "users.json")
+CURRENT_CHAT_ID = None
+
+def _now_iso():
+    return datetime.now().isoformat()
+
+def _today():
+    return datetime.now().date().isoformat()
+
+def _base_user_state(chat_id):
+    s = DEFAULT_STATE.copy()
+    s["user_chat_id"] = str(chat_id)
+    s["joined_at"] = _today()
+    s["approval_status"] = "PENDING"
+    s["running"] = False
+    s["api_registered"] = False
+    s["api_tested"] = False
+    # nested mutable copy
+    s["settings"] = dict(DEFAULT_STATE.get("settings", {}))
+    s["real_test_stats"] = dict(DEFAULT_STATE.get("real_test_stats", {}))
+    s["trades"] = []
+    s["daily_signals"] = []
+    s["bingx_api"] = None
+    return s
+
+def load_users():
+    ensure_data_dir()
+    if not os.path.exists(USERS_PATH):
+        # 기존 단일 저장소가 있으면 현재 관리자/active chat 기준으로 마이그레이션 시도
+        users = {}
+        try:
+            legacy = {}
+            if os.path.exists(STATE_PATH):
+                with open(STATE_PATH, "r", encoding="utf-8") as f:
+                    legacy = json.load(f)
+            chat_id = legacy.get("user_chat_id") or load_active_chat_id() or "default"
+            if chat_id != "default":
+                legacy_user = _base_user_state(chat_id)
+                legacy_user.update(legacy)
+                try:
+                    if os.path.exists(BINGX_API_PATH):
+                        with open(BINGX_API_PATH, "r", encoding="utf-8") as f:
+                            legacy_user["bingx_api"] = json.load(f)
+                            legacy_user["api_registered"] = True
+                    if os.path.exists(TRADES_PATH):
+                        with open(TRADES_PATH, "r", encoding="utf-8") as f:
+                            legacy_user["trades"] = json.load(f)
+                    if os.path.exists(DAILY_SIGNALS_PATH):
+                        with open(DAILY_SIGNALS_PATH, "r", encoding="utf-8") as f:
+                            legacy_user["daily_signals"] = json.load(f)
+                except Exception:
+                    pass
+                users[str(chat_id)] = legacy_user
+        except Exception as e:
+            print(f"[MULTIUSER MIGRATION ERROR] {type(e).__name__}: {e}")
+            users = {}
+        save_users(users)
+    with open(USERS_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def save_users(users):
+    ensure_data_dir()
+    with open(USERS_PATH, "w", encoding="utf-8") as f:
+        json.dump(users, f, ensure_ascii=False, indent=2)
+
+def set_current_user(chat_id):
+    global CURRENT_CHAT_ID
+    if chat_id is None:
+        return
+    CURRENT_CHAT_ID = str(chat_id)
+    users = load_users()
+    if str(chat_id) not in users:
+        users[str(chat_id)] = _base_user_state(chat_id)
+        save_users(users)
+
+def get_current_user_id():
+    if CURRENT_CHAT_ID:
+        return str(CURRENT_CHAT_ID)
+    active = load_active_chat_id()
+    if active:
+        return str(active)
+    return "default"
+
+def get_user_state(chat_id):
+    users = load_users()
+    sid = str(chat_id)
+    if sid not in users:
+        users[sid] = _base_user_state(sid)
+        save_users(users)
+    u = users[sid]
+    # 신규 필드 보정
+    base = _base_user_state(sid)
+    changed = False
+    for k, v in base.items():
+        if k not in u:
+            u[k] = v
+            changed = True
+    if changed:
+        users[sid] = u
+        save_users(users)
+    return u
+
+def save_user_state(chat_id, state):
+    users = load_users()
+    sid = str(chat_id)
+    state["user_chat_id"] = sid
+    state["updated_at"] = _now_iso()
+    users[sid] = state
+    save_users(users)
+
+# 기존 함수명 override: 이후 코드 변경 최소화
+def load_state():
+    return get_user_state(get_current_user_id())
+
+def save_state(state):
+    save_user_state(get_current_user_id(), state)
+
+def save_bingx_api(api_key, api_secret):
+    state = load_state()
+    state["bingx_api"] = {"api_key": api_key, "api_secret": api_secret}
+    state["api_registered"] = True
+    state["approval_status"] = "PENDING" if state.get("approval_status") != "APPROVED" else state.get("approval_status")
+    save_state(state)
+    print(f"[BINGX API SAVED] chat_id={state.get('user_chat_id')} api_key=***")
+
+def load_bingx_api():
+    state = load_state()
+    return state.get("bingx_api")
+
+def mark_bingx_api_tested():
+    state = load_state()
+    state["api_tested"] = True
+    if state.get("approval_status") != "APPROVED":
+        state["approval_status"] = "PENDING"
+    save_state(state)
+
+def set_seed_auto_mode():
+    state = load_state()
+    state["seed_mode"] = "auto"
+    state["seed_usdt"] = 0
+    if state.get("approval_status") != "APPROVED":
+        state["approval_status"] = "PENDING"
+    save_state(state)
+
+def set_seed_fixed_mode(value):
+    state = load_state()
+    state["seed_mode"] = "fixed"
+    state["seed_usdt"] = float(value)
+    state["paper_balance"] = float(value)
+    if state.get("approval_status") != "APPROVED":
+        state["approval_status"] = "PENDING"
+    save_state(state)
+
+def append_trade(item):
+    state = load_state()
+    trades = state.get("trades", [])
+    item["created_at"] = _now_iso()
+    item["chat_id"] = state.get("user_chat_id")
+    trades.append(item)
+    state["trades"] = trades
+    save_state(state)
+
+def load_trades():
+    return load_state().get("trades", [])
+
+def append_daily_signal(item):
+    state = load_state()
+    signals = state.get("daily_signals", [])
+    item["created_at"] = _now_iso()
+    item["chat_id"] = state.get("user_chat_id")
+    signals.append(item)
+    state["daily_signals"] = signals
+    save_state(state)
+
+def set_user_pending_approval(chat_id=None):
+    if chat_id is not None:
+        set_current_user(chat_id)
+    state = load_state()
+    if chat_id is not None:
+        state["user_chat_id"] = str(chat_id)
+    if state.get("approval_status") not in ("APPROVED", "PAUSED", "BLOCKED"):
+        state["approval_status"] = "PENDING"
+    save_state(state)
+    return state
+
+def approve_user(chat_id=None):
+    if chat_id is not None:
+        set_current_user(chat_id)
+    state = load_state()
+    state["approval_status"] = "APPROVED"
+    state["approved_at"] = _now_iso()
+    save_state(state)
+    return state
+
+def reject_user(chat_id=None):
+    if chat_id is not None:
+        set_current_user(chat_id)
+    state = load_state()
+    state["approval_status"] = "REJECTED"
+    state["running"] = False
+    save_state(state)
+    return state
+
+def pause_user(chat_id=None):
+    if chat_id is not None:
+        set_current_user(chat_id)
+    state = load_state()
+    state["approval_status"] = "PAUSED"
+    state["running"] = False
+    save_state(state)
+    return state
+
+def is_user_approved():
+    return load_state().get("approval_status") == "APPROVED"
+
+def list_users():
+    users = load_users()
+    # stable order: approved/running first then joined
+    return sorted(users.values(), key=lambda u: (u.get("approval_status") != "APPROVED", not u.get("running"), u.get("joined_at") or ""))
+
+def iter_live_users():
+    return [u for u in list_users() if u.get("approval_status") == "APPROVED" and u.get("running")]
+
+def get_admin_user_snapshot():
+    return {
+        "users": list_users(),
+        "total": len(list_users()),
+    }
+
+def get_live_trade_stats_for_state(state):
+    closed = [t for t in state.get("trades", []) if t.get("type") == "CLOSE"]
+    total = len(closed)
+    wins = losses = 0
+    total_pnl = month_pnl = week_pnl = 0.0
+    best = worst = None
+    now = datetime.now()
+    for t in closed:
+        p = t.get("position", {})
+        pnl = float(p.get("realized_pnl", 0) or 0)
+        pct = float(p.get("pnl_pct", 0) or 0)
+        total_pnl += pnl
+        if pnl > 0:
+            wins += 1
+        elif pnl < 0:
+            losses += 1
+        try:
+            created = datetime.fromisoformat(t.get("created_at"))
+        except Exception:
+            created = now
+        if created.year == now.year and created.month == now.month:
+            month_pnl += pnl
+        if (now - created).days <= 7:
+            week_pnl += pnl
+        item = {"base": p.get("base"), "symbol": p.get("symbol"), "pnl": pnl, "pnl_pct": pct}
+        if best is None or pct > float(best.get("pnl_pct", -999999)):
+            best = item
+        if worst is None or pct < float(worst.get("pnl_pct", 999999)):
+            worst = item
+    return {
+        "total": total,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": (wins / total * 100) if total else 0.0,
+        "total_pnl": total_pnl,
+        "month_pnl": month_pnl,
+        "week_pnl": week_pnl,
+        "holding": 1 if state.get("live_position") else 0,
+        "best": best,
+        "worst": worst,
+    }
+
+def get_live_trade_stats():
+    return get_live_trade_stats_for_state(load_state())
+
+def reset_live_daily_if_needed(state=None):
+    today = _today()
+    if state is None:
+        state = load_state()
+    if state.get("live_daily_entry_date") != today:
+        state["live_daily_entry_date"] = today
+        state["live_daily_entry_count"] = 0
+    return state
+
+def can_live_enter_today():
+    state = reset_live_daily_if_needed(load_state())
+    return int(state.get("live_daily_entry_count", 0) or 0) < 1

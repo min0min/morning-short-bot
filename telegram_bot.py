@@ -2,7 +2,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
 from config import TELEGRAM_BOT_TOKEN, BOT_VERSION, REAL_TEST_SYMBOL, REAL_TEST_MARGIN_USDT, ADMIN_CHAT_ID
-from storage import load_state, save_state, load_trades, calc_trade_stats, save_active_chat_id, save_bingx_api, mark_bingx_api_tested, set_seed_auto_mode, set_seed_fixed_mode, load_bingx_api, save_real_test_open, save_real_test_close, get_real_test_stats, get_live_trade_stats, get_admin_user_snapshot, set_user_pending_approval, approve_user, reject_user, pause_user
+from storage import load_state, save_state, load_trades, calc_trade_stats, save_active_chat_id, save_bingx_api, mark_bingx_api_tested, set_seed_auto_mode, set_seed_fixed_mode, load_bingx_api, save_real_test_open, save_real_test_close, get_real_test_stats, get_live_trade_stats, get_admin_user_snapshot, set_user_pending_approval, approve_user, reject_user, pause_user, set_current_user, list_users
 from messages import (
     main_menu_text,
     status_message,
@@ -57,7 +57,7 @@ def main_keyboard(chat_id=None):
         [InlineKeyboardButton("🧪 실전 주문 테스트", callback_data="real_order_test"), InlineKeyboardButton("🧪 실전 테스트 청산", callback_data="real_close_test")],
         [InlineKeyboardButton("📢 안내사항", callback_data="notice")],
     ]
-    if chat_id is not None and str(chat_id) == str(ADMIN_CHAT_ID):
+    if chat_id is not None and str(chat_id).strip() == str(ADMIN_CHAT_ID).strip():
         rows.append([InlineKeyboardButton("👑 관리자", callback_data="admin_monitor")])
     return InlineKeyboardMarkup(rows)
 
@@ -97,7 +97,7 @@ def admin_approval_keyboard(chat_id):
     ])
 
 def is_admin_chat(chat_id):
-    return str(chat_id) == str(ADMIN_CHAT_ID)
+    return str(chat_id).strip() == str(ADMIN_CHAT_ID).strip()
 
 
 async def send_admin_approval_request(context, chat_id, balance=None):
@@ -127,6 +127,13 @@ def back_to_main_keyboard():
         [InlineKeyboardButton("↩️ 메인 메뉴", callback_data="cancel_to_menu")]
     ])
 
+
+def current_main_keyboard(update=None):
+    try:
+        return main_keyboard(update.effective_chat.id)
+    except Exception:
+        return main_keyboard(None)
+
 async def send_main_menu(update_or_query):
     chat_id = None
     try:
@@ -138,16 +145,22 @@ async def send_main_menu(update_or_query):
             chat_id = None
 
     if hasattr(update_or_query, "message") and update_or_query.message:
-        await update_or_query.message.reply_text(main_menu_text(), reply_markup=main_keyboard(chat_id))
+        await update_or_query.message.reply_text(main_menu_text(), reply_markup=main_keyboard(target_chat_id))
     else:
-        await update_or_query.edit_message_text(main_menu_text(), reply_markup=main_keyboard(chat_id))
+        await update_or_query.edit_message_text(main_menu_text(), reply_markup=main_keyboard(target_chat_id))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     save_active_chat_id(chat_id)
-    await update.message.reply_text(
-        f"✅ CHAT ID 저장 완료\n현재 chat_id: {chat_id}\n버전: {BOT_VERSION}"
-    )
+    set_current_user(chat_id)
+    if is_admin_chat(chat_id):
+        await update.message.reply_text(
+            f"✅ CHAT ID 저장 완료\n현재 chat_id: {chat_id}\n버전: {BOT_VERSION}\n관리자: ON"
+        )
+    else:
+        await update.message.reply_text(
+            f"✅ CHAT ID 저장 완료\n현재 chat_id: {chat_id}\n버전: {BOT_VERSION}"
+        )
     await send_main_menu(update)
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -156,6 +169,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     if update.effective_chat:
         save_active_chat_id(update.effective_chat.id)
+        set_current_user(update.effective_chat.id)
+        set_current_user(update.effective_chat.id)
     state = load_state()
 
     if data.startswith("admin_approve:"):
@@ -166,7 +181,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         approve_user(target_chat_id)
         await query.edit_message_text(f"✅ 승인 완료\n\nchat_id: {target_chat_id}")
         try:
-            await context.bot.send_message(chat_id=target_chat_id, text=user_approved_message(), reply_markup=main_keyboard())
+            await context.bot.send_message(chat_id=target_chat_id, text=user_approved_message(), reply_markup=main_keyboard(target_chat_id))
         except Exception as e:
             print(f"[APPROVAL USER NOTIFY ERROR] {type(e).__name__}: {e}")
         return
@@ -179,7 +194,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reject_user(target_chat_id)
         await query.edit_message_text(f"❌ 승인 거절\n\nchat_id: {target_chat_id}")
         try:
-            await context.bot.send_message(chat_id=target_chat_id, text=user_rejected_message(), reply_markup=main_keyboard())
+            await context.bot.send_message(chat_id=target_chat_id, text=user_rejected_message(), reply_markup=main_keyboard(target_chat_id))
         except Exception as e:
             print(f"[REJECT USER NOTIFY ERROR] {type(e).__name__}: {e}")
         return
@@ -192,7 +207,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pause_user(target_chat_id)
         await query.edit_message_text(f"⏸ 보류/일시정지 완료\n\nchat_id: {target_chat_id}")
         try:
-            await context.bot.send_message(chat_id=target_chat_id, text="⏸ 관리자에 의해 보류/일시정지 상태가 되었습니다.", reply_markup=main_keyboard())
+            await context.bot.send_message(chat_id=target_chat_id, text="⏸ 관리자에 의해 보류/일시정지 상태가 되었습니다.", reply_markup=main_keyboard(target_chat_id))
         except Exception as e:
             print(f"[PAUSE USER NOTIFY ERROR] {type(e).__name__}: {e}")
         return
@@ -206,27 +221,38 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("⛔ 관리자만 접근할 수 있습니다.", reply_markup=main_keyboard(update.effective_chat.id))
             return
 
-        balance = None
-        try:
-            api = load_bingx_api()
-            if api:
-                bal = await get_bingx_swap_balance(api["api_key"], api["api_secret"])
-                balance = bal.get("available_usdt")
-        except Exception as e:
-            print(f"[ADMIN MONITOR BALANCE ERROR] {type(e).__name__}: {e}")
+        users = list_users()
+        balance_map = {}
+        original_chat_id = update.effective_chat.id
+        for u in users:
+            uid = str(u.get("user_chat_id"))
+            try:
+                set_current_user(uid)
+                api = load_bingx_api()
+                if api:
+                    bal = await get_bingx_swap_balance(api["api_key"], api["api_secret"])
+                    balance_map[uid] = bal.get("available_usdt")
+            except Exception as e:
+                print(f"[ADMIN MONITOR BALANCE ERROR] user={uid} {type(e).__name__}: {e}")
+        set_current_user(original_chat_id)
 
         snapshot = get_admin_user_snapshot()
-        await query.edit_message_text(admin_monitor_message(snapshot, balance), reply_markup=admin_monitor_keyboard())
+        await query.edit_message_text(admin_monitor_message(snapshot, balance_map), reply_markup=admin_monitor_keyboard())
         return
 
     elif data == "admin_force_stop":
         if not is_admin_chat(update.effective_chat.id):
             await query.edit_message_text("⛔ 관리자만 사용할 수 있습니다.", reply_markup=main_keyboard(update.effective_chat.id))
             return
-        state = load_state()
-        state["running"] = False
-        save_state(state)
-        await query.edit_message_text("⏸ 관리자 강제 중지 완료\n\n트레이딩 실행: OFF", reply_markup=admin_monitor_keyboard())
+        users = list_users()
+        for u in users:
+            uid = str(u.get("user_chat_id"))
+            set_current_user(uid)
+            st = load_state()
+            st["running"] = False
+            save_state(st)
+        set_current_user(update.effective_chat.id)
+        await query.edit_message_text("⏸ 전체 사용자 강제 중지 완료\n\n모든 유저 트레이딩 실행: OFF", reply_markup=admin_monitor_keyboard())
         return
 
     if data == "seed":
@@ -243,12 +269,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         state["running"] = True
         save_state(state)
-        await query.edit_message_text("✅ 트레이딩 시작\n\n상태 : LIVE TRADING ON", reply_markup=main_keyboard())
+        await query.edit_message_text("✅ 트레이딩 시작\n\n상태 : LIVE TRADING ON", reply_markup=current_main_keyboard(update))
 
     elif data == "stop_paper":
         state["running"] = False
         save_state(state)
-        await query.edit_message_text("⏸ 트레이딩 중지\n\n상태 : TRADING MODE OFF", reply_markup=main_keyboard())
+        await query.edit_message_text("⏸ 트레이딩 중지\n\n상태 : TRADING MODE OFF", reply_markup=current_main_keyboard(update))
 
     elif data == "status":
         live_balance = None
@@ -259,7 +285,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 live_balance = bal.get("available_usdt")
         except Exception as e:
             print(f"[STATUS BALANCE ERROR] {type(e).__name__}: {e}")
-        await query.edit_message_text(status_message(load_state(), live_balance), reply_markup=main_keyboard())
+        await query.edit_message_text(status_message(load_state(), live_balance), reply_markup=current_main_keyboard(update))
 
     elif data == "history":
         trades = load_trades()[-7:]
@@ -274,7 +300,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if pnl is not None:
                     pnl_txt = f" / PnL ${float(pnl):,.4f}"
                 msg += f"- {t.get('type')} / {p.get('base') or p.get('symbol')} / {t.get('reason', p.get('close_reason', ''))}{pnl_txt}\n"
-        await query.edit_message_text(msg, reply_markup=main_keyboard())
+        await query.edit_message_text(msg, reply_markup=current_main_keyboard(update))
 
     elif data == "profit":
         try:
@@ -290,7 +316,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "stats":
         stats = calc_trade_stats()
-        await query.edit_message_text(stats_message(stats), reply_markup=main_keyboard())
+        await query.edit_message_text(stats_message(stats), reply_markup=current_main_keyboard(update))
 
     elif data == "settings":
         s = state["settings"]
@@ -324,10 +350,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif result["signal"] and state.get("open_position"):
                 msg += "\n\n⚠️ 이미 오픈 포지션이 있어서 중복 진입은 막았습니다."
 
-            await query.edit_message_text(msg, reply_markup=main_keyboard())
+            await query.edit_message_text(msg, reply_markup=current_main_keyboard(update))
 
         except Exception as e:
-            await query.edit_message_text(f"❌ 마감 15분봉 즉시 테스트 실패\n\n{type(e).__name__}: {e}", reply_markup=main_keyboard())
+            await query.edit_message_text(f"❌ 마감 15분봉 즉시 테스트 실패\n\n{type(e).__name__}: {e}", reply_markup=current_main_keyboard(update))
 
     elif data == "date_backtest":
         context.user_data[WAITING_BACKTEST_DATE] = True
@@ -393,7 +419,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 REAL_TEST_MARGIN_USDT,
             )
             save_real_test_open(result)
-            await query.message.reply_text(real_order_success_message(result), reply_markup=main_keyboard())
+            await query.message.reply_text(real_order_success_message(result), reply_markup=current_main_keyboard(update))
         except Exception as e:
             await query.message.reply_text(
                 real_order_fail_message(f"{type(e).__name__}: {e}"),
@@ -421,7 +447,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 close_price = None
             closed_pos = save_real_test_close(result, close_price=close_price)
-            await query.message.reply_text(real_close_success_message_with_pnl(result, closed_pos), reply_markup=main_keyboard())
+            await query.message.reply_text(real_close_success_message_with_pnl(result, closed_pos), reply_markup=current_main_keyboard(update))
         except Exception as e:
             await query.message.reply_text(
                 real_close_fail_message(f"{type(e).__name__}: {e}"),
@@ -447,11 +473,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     else:
-        await query.edit_message_text("준비중입니다.", reply_markup=main_keyboard())
+        await query.edit_message_text("준비중입니다.", reply_markup=current_main_keyboard(update))
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat:
         save_active_chat_id(update.effective_chat.id)
+        set_current_user(update.effective_chat.id)
     if context.user_data.get(WAITING_BINGX_API_KEY):
         api_key = update.message.text.strip()
         context.user_data[WAITING_BINGX_API_KEY] = False
@@ -481,7 +508,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
         if not api_key or not api_secret:
-            await update.message.reply_text("❌ API 정보가 비어있습니다. /start 후 다시 등록해주세요.", reply_markup=main_keyboard())
+            await update.message.reply_text("❌ API 정보가 비어있습니다. /start 후 다시 등록해주세요.", reply_markup=current_main_keyboard(update))
             return
 
         save_bingx_api(api_key, api_secret)
@@ -524,7 +551,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 result["total_symbols"],
                 result["errors"],
             )
-            await update.message.reply_text(msg, reply_markup=main_keyboard())
+            await update.message.reply_text(msg, reply_markup=current_main_keyboard(update))
             return
 
         except Exception as e:
@@ -542,7 +569,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if value == 0:
                 api = load_bingx_api()
                 if not api:
-                    await update.message.reply_text("❌ BingX API가 등록되어 있지 않습니다.\n먼저 🔑 API 키 등록을 진행해주세요.", reply_markup=main_keyboard())
+                    await update.message.reply_text("❌ BingX API가 등록되어 있지 않습니다.\n먼저 🔑 API 키 등록을 진행해주세요.", reply_markup=current_main_keyboard(update))
                     return
 
                 result = await get_bingx_swap_balance(api["api_key"], api["api_secret"])
@@ -555,7 +582,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"✅ 시드 자동조회 모드 설정 완료\n\nBingX 사용 가능 잔고 : ${available:,.2f}\n\n다음 진입부터 매번 거래소 잔고를 다시 조회해서 비중을 계산합니다.\n\n1차 2% : ${available*0.02:,.2f}\n2차 1% : ${available*0.01:,.2f}\n3차 1% : ${available*0.01:,.2f}\n\n상태 : 승인 대기",
                     reply_markup=main_keyboard()
                 )
-                await update.message.reply_text(user_approval_waiting_message(), reply_markup=main_keyboard())
+                await update.message.reply_text(user_approval_waiting_message(), reply_markup=current_main_keyboard(update))
                 await send_admin_approval_request(context, update.effective_chat.id, available)
                 return
 
@@ -568,7 +595,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ 고정 시드 설정 완료\n\n기준 시드 : ${value:,.2f}\n\n1차 진입 : ${value*0.02:,.2f}\n2차 진입 : ${value*0.01:,.2f}\n3차 진입 : ${value*0.01:,.2f}\n\n상태 : 승인 대기",
                 reply_markup=main_keyboard()
             )
-            await update.message.reply_text(user_approval_waiting_message(), reply_markup=main_keyboard())
+            await update.message.reply_text(user_approval_waiting_message(), reply_markup=current_main_keyboard(update))
             await send_admin_approval_request(context, update.effective_chat.id, value)
         except Exception:
             await update.message.reply_text("숫자로 입력해주세요. 예) 1000")

@@ -10,6 +10,9 @@ from storage import (
     append_daily_signal,
     load_active_chat_id,
     load_bingx_api,
+    set_current_user,
+    list_users,
+    iter_live_users,
     reset_live_daily_if_needed,
     save_live_entry,
     save_live_close,
@@ -44,20 +47,16 @@ def now_kst_text():
 def resolve_chat_id(default_chat_id=None):
     active = load_active_chat_id()
     if active:
-        print(f"[CHAT SOURCE] active_chat.json chat_id={active}")
         return active
     if default_chat_id:
-        print(f"[CHAT SOURCE] ENV TELEGRAM_CHAT_ID chat_id={default_chat_id}")
         return str(default_chat_id)
-    print("[CHAT SOURCE] none")
     return None
 
 async def safe_send(bot, chat_id, text):
-    target_chat_id = resolve_chat_id(chat_id)
+    target_chat_id = str(chat_id) if chat_id else resolve_chat_id(chat_id)
     if not target_chat_id:
-        print("[TELEGRAM SEND SKIP] no chat_id. Send /start first.")
+        print("[TELEGRAM SEND SKIP] no chat_id")
         return False
-
     try:
         await bot.send_message(chat_id=target_chat_id, text=text)
         return True
@@ -66,9 +65,7 @@ async def safe_send(bot, chat_id, text):
         return False
 
 def _entry_pct_by_level(level):
-    if level == 1:
-        return 0.02
-    return 0.01
+    return 0.02 if level == 1 else 0.01
 
 async def _place_live_short_for_signal(signal, level=1):
     api = load_bingx_api()
@@ -82,11 +79,8 @@ async def _place_live_short_for_signal(signal, level=1):
 
     entry_pct = _entry_pct_by_level(level)
     margin_usdt = available * entry_pct
-
-    # Futures 주문 수량은 포지션 가치 기준이므로 margin * leverage를 주문가치로 사용
     order_value_usdt = margin_usdt * REAL_FIXED_LEVERAGE
 
-    # 너무 작은 주문은 BingX 규칙 보정 로직이 올려주지만, 로그 명확화를 위해 전달
     symbol = signal.get("base") or signal.get("symbol")
     result = await place_short_market_order_with_leverage(
         api["api_key"],
@@ -105,78 +99,91 @@ async def _place_live_short_for_signal(signal, level=1):
     return pos, result, available, margin_usdt, order_value_usdt
 
 async def scheduler_alive_job(bot, chat_id):
-    state = load_state()
-    state = reset_live_daily_if_needed(state)
-    save_state(state)
-
-    print(f"[ALIVE] {now_kst_text()} running={state.get('running')}")
+    users = list_users()
+    live_users = [u for u in users if u.get("approval_status") == "APPROVED" and u.get("running")]
+    print(f"[ALIVE] {now_kst_text()} users={len(users)} live={len(live_users)}")
+    admin_or_active = resolve_chat_id(chat_id)
     await safe_send(
         bot,
-        chat_id,
+        admin_or_active,
         "🟢 [SCHEDULER ALIVE]\n\n"
         f"시간 : {now_kst_text()}\n"
-        f"트레이딩 실행 : {'ON' if state.get('running') else 'OFF'}\n"
-        f"실전 전략 : {'ON' if LIVE_STRATEGY_ENABLED else 'OFF'}\n"
-        f"오늘 진입 : {state.get('live_daily_entry_count', 0)}/{LIVE_DAILY_MAX_ENTRIES}\n\n"
-        "09:15 마감 15분봉 실전 스캔 대기중"
+        f"등록 유저 : {len(users)}명\n"
+        f"실행 유저 : {len(live_users)}명\n"
+        f"실전 전략 : {'ON' if LIVE_STRATEGY_ENABLED else 'OFF'}\n\n"
+        "09:15 멀티유저 실전 스캔 대기중"
     )
 
 async def scan_ready_job(bot, chat_id):
-    state = load_state()
-    print(f"[SCAN READY] {now_kst_text()} running={state.get('running')}")
+    live_users = iter_live_users()
     await safe_send(
         bot,
-        chat_id,
+        resolve_chat_id(chat_id),
         "🟡 [SCAN READY]\n\n"
         f"시간 : {now_kst_text()}\n"
-        f"트레이딩 실행 : {'ON' if state.get('running') else 'OFF'}\n\n"
+        f"실행 유저 : {len(live_users)}명\n\n"
         "곧 09:15 마감 15분봉 O→C 스캔을 시작합니다.\n"
-        "조건 충족 + BingX 상장 시 실전 SHORT 진입합니다."
+        "신호가 있으면 승인/실행 ON 유저별로 독립 주문합니다."
     )
 
-async def closed_15m_scan_job(bot, chat_id, attempt="PRIMARY"):
-    print(f"[JOB START] closed_15m_scan_job {attempt} {now_kst_text()}")
+async def _enter_for_user(bot, user_state, signal, attempt):
+    uid = str(user_state.get("user_chat_id"))
+    set_current_user(uid)
+    state = reset_live_daily_if_needed(load_state())
+    save_state(state)
+
+    if state.get("approval_status") != "APPROVED":
+        await safe_send(bot, uid, f"⛔ [LIVE ENTRY BLOCKED]\n\n승인 상태: {state.get('approval_status')}")
+        return
+    if not state.get("running"):
+        return
+    if state.get("live_position"):
+        await safe_send(bot, uid, "⚠️ [LIVE ENTRY SKIP]\n\n이미 실전 오픈 포지션이 있어 신규 진입을 막았습니다.")
+        return
+    if int(state.get("live_daily_entry_count", 0) or 0) >= LIVE_DAILY_MAX_ENTRIES:
+        await safe_send(bot, uid, "⚠️ [LIVE ENTRY SKIP]\n\n오늘 실전 진입 제한 1회를 이미 사용했습니다.")
+        return
 
     try:
-        state = reset_live_daily_if_needed(load_state())
-        save_state(state)
-        print(
-            f"[STATE] attempt={attempt} running={state.get('running')} "
-            f"live_position={bool(state.get('live_position'))} "
-            f"daily={state.get('live_daily_entry_count')}/{LIVE_DAILY_MAX_ENTRIES}"
-        )
+        pos, order_result, available, margin_usdt, order_value_usdt = await _place_live_short_for_signal(signal, level=1)
+        print(f"[LIVE ENTRY USER] uid={uid} {pos.get('symbol')} avg={pos.get('avg_price')} qty={pos.get('qty')}")
+        await safe_send(bot, uid, live_entry_success_message(pos, order_result, signal))
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"
+        print(f"[LIVE ENTRY ERROR USER] uid={uid} {err}")
+        print(traceback.format_exc())
+        await safe_send(bot, uid, live_entry_error_message(err))
+
+async def closed_15m_scan_job(bot, chat_id, attempt="PRIMARY"):
+    print(f"[JOB START] multiuser closed_15m_scan_job {attempt} {now_kst_text()}")
+    try:
+        users = list_users()
+        live_users = [u for u in users if u.get("approval_status") == "APPROVED" and u.get("running")]
+        admin_or_active = resolve_chat_id(chat_id)
+
+        if not LIVE_STRATEGY_ENABLED:
+            await safe_send(bot, admin_or_active, live_skip_message("LIVE_STRATEGY_ENABLED=False"))
+            return
+
+        if not live_users:
+            await safe_send(bot, admin_or_active, f"⏸ [09:15 LIVE SCAN SKIP / {attempt}]\n\n실행 ON 상태의 승인 유저가 없습니다.")
+            return
+
+        # strategy settings 기준은 첫 실행 유저 기준
+        set_current_user(live_users[0].get("user_chat_id"))
+        state = load_state()
+        threshold = state["settings"]["pump_threshold_pct"]
 
         await safe_send(
             bot,
-            chat_id,
-            f"🟢 [09:15 LIVE SCAN START / {attempt}]\n\n"
+            admin_or_active,
+            f"🟢 [09:15 MULTIUSER LIVE SCAN / {attempt}]\n\n"
             f"시간 : {now_kst_text()}\n"
+            f"대상 유저 : {len(live_users)}명\n"
             "마감 15분봉 O→C 기준으로 실전 후보를 스캔합니다."
         )
 
-        if not LIVE_STRATEGY_ENABLED:
-            await safe_send(bot, chat_id, live_skip_message("LIVE_STRATEGY_ENABLED=False"))
-            return
-
-        if not state.get("running"):
-            await safe_send(bot, chat_id, f"⏸ [09:15 LIVE SCAN SKIP / {attempt}]\n\n트레이딩 실행 OFF 상태라 스캔을 건너뜁니다.")
-            return
-
-        if state.get("approval_status") != "APPROVED":
-            await safe_send(bot, chat_id, f"⛔ [LIVE ENTRY BLOCKED]\n\n승인 상태: {state.get('approval_status')}\n관리자 승인 전에는 실전 주문을 실행하지 않습니다.")
-            return
-
-        if state.get("live_position"):
-            await safe_send(bot, chat_id, "⚠️ [LIVE ENTRY SKIP]\n\n이미 실전 오픈 포지션이 있어 신규 진입을 막았습니다.")
-            return
-
-        if int(state.get("live_daily_entry_count", 0) or 0) >= LIVE_DAILY_MAX_ENTRIES:
-            await safe_send(bot, chat_id, "⚠️ [LIVE ENTRY SKIP]\n\n오늘 실전 진입 제한 1회를 이미 사용했습니다.")
-            return
-
-        threshold = state["settings"]["pump_threshold_pct"]
         result = await scan_latest_closed_15m_oc(threshold)
-
         candidates = result.get("candidates", [])
         top20 = result.get("top20") or candidates[:20]
         passed = result.get("passed", [])
@@ -185,167 +192,130 @@ async def closed_15m_scan_job(bot, chat_id, attempt="PRIMARY"):
         print(
             f"[SCAN RESULT] attempt={attempt} target={result.get('target_open')} "
             f"total={result.get('total_symbols')} errors={result.get('errors')} "
-            f"candidates={len(candidates)} passed={len(passed)} "
-            f"signal={signal.get('base') if signal else None}"
+            f"passed={len(passed)} signal={signal.get('base') if signal else None}"
         )
 
-        append_daily_signal({
-            "attempt": attempt,
-            "target_open": result.get("target_open"),
-            "total_symbols": result.get("total_symbols"),
-            "errors": result.get("errors"),
-            "passed_count": len(passed),
-            "signal": signal,
-            "top20": top20,
-            "mode": "LIVE",
-        })
+        # 모든 live user에게 daily signal 기록
+        for u in live_users:
+            set_current_user(u.get("user_chat_id"))
+            append_daily_signal({
+                "attempt": attempt,
+                "target_open": result.get("target_open"),
+                "total_symbols": result.get("total_symbols"),
+                "errors": result.get("errors"),
+                "passed_count": len(passed),
+                "signal": signal,
+                "top20": top20,
+                "mode": "LIVE_MULTIUSER",
+            })
 
         await safe_send(
             bot,
-            chat_id,
+            admin_or_active,
             scan_result_message(
                 top20,
                 threshold,
                 signal=signal,
                 total_symbols=result["total_symbols"],
                 errors=result["errors"],
-                title=f"{result['target_open']} LIVE 마감 15분봉 SCAN / {attempt}"
+                title=f"{result['target_open']} MULTIUSER LIVE SCAN / {attempt}"
             )
         )
 
         if not signal:
-            print(f"[SCAN END] no signal attempt={attempt}")
             if attempt == "FINAL_RETRY":
-                await safe_send(bot, chat_id, "📭 [FINAL NO ENTRY]\n\n최종 재시도까지 진입 조건 충족 종목이 없습니다.")
+                await safe_send(bot, admin_or_active, "📭 [FINAL NO ENTRY]\n\n최종 재시도까지 진입 조건 충족 종목이 없습니다.")
             return
 
-        # BingX 자동 상장 여부 확인
         try:
             listing = await is_bingx_futures_listed(signal.get("base") or signal.get("symbol"))
-            print(
-                f"[BINGX LISTING] base={signal.get('base')} "
-                f"listed={listing.get('listed')} symbol={listing.get('symbol')} raw={listing.get('raw_symbol')}"
-            )
-
             if not listing.get("listed"):
-                await safe_send(bot, chat_id, bingx_auto_listing_skip_message(signal, listing))
+                await safe_send(bot, admin_or_active, bingx_auto_listing_skip_message(signal, listing))
                 return
-
-            await safe_send(bot, chat_id, bingx_auto_listing_ok_message(signal, listing))
-
+            await safe_send(bot, admin_or_active, bingx_auto_listing_ok_message(signal, listing))
         except Exception as e:
             err = f"{type(e).__name__}: {e}"
-            print(f"[BINGX LISTING ERROR] {err}")
-            await safe_send(bot, chat_id, bingx_auto_listing_error_message(signal, err))
+            await safe_send(bot, admin_or_active, bingx_auto_listing_error_message(signal, err))
             return
 
-        # 실전 주문
-        try:
-            pos, order_result, available, margin_usdt, order_value_usdt = await _place_live_short_for_signal(signal, level=1)
-            print(
-                f"[LIVE ENTRY] {pos.get('symbol')} avg={pos.get('avg_price')} qty={pos.get('qty')} "
-                f"margin={margin_usdt} order_value={order_value_usdt} balance={available}"
-            )
-            await safe_send(bot, chat_id, live_entry_success_message(pos, order_result, signal))
-
-        except Exception as e:
-            err = f"{type(e).__name__}: {e}"
-            print("[LIVE ENTRY ERROR]")
-            print(traceback.format_exc())
-            await safe_send(bot, chat_id, live_entry_error_message(err))
-            return
+        # 유저별 독립 실전 주문
+        for u in live_users:
+            await _enter_for_user(bot, u, signal, attempt)
 
     except Exception as e:
-        print("[SCAN ERROR]")
+        print("[MULTIUSER SCAN ERROR]")
         print(traceback.format_exc())
-        await safe_send(
-            bot,
-            chat_id,
-            f"❌ [09:15 LIVE SCAN ERROR / {attempt}]\n\n{type(e).__name__}: {e}\n\nRailway 로그를 확인하세요."
-        )
+        await safe_send(bot, resolve_chat_id(chat_id), f"❌ [09:15 MULTIUSER SCAN ERROR / {attempt}]\n\n{type(e).__name__}: {e}")
 
 async def position_watch_job(bot, chat_id):
     try:
-        state = load_state()
-        if not state.get("running"):
-            return
+        for u in iter_live_users():
+            uid = str(u.get("user_chat_id"))
+            set_current_user(uid)
+            state = load_state()
+            pos = state.get("live_position")
+            if not pos:
+                continue
 
-        pos = state.get("live_position")
-        if not pos:
-            return
+            api = load_bingx_api()
+            if not api:
+                continue
 
-        api = load_bingx_api()
-        if not api:
-            return
+            price = await get_bingx_symbol_price(pos["symbol"])
+            pos = update_live_position_metrics(price)
+            pnl = float(pos.get("last_pnl_pct", 0) or 0)
+            print(f"[LIVE WATCH USER] uid={uid} {pos.get('symbol')} price={price} pnl={pnl:.4f}%")
 
-        price = await get_bingx_symbol_price(pos["symbol"])
-        pos = update_live_position_metrics(price)
-
-        pnl = float(pos.get("last_pnl_pct", 0) or 0)
-        print(f"[LIVE WATCH] {pos.get('symbol')} price={price} pnl={pnl:.4f}%")
-
-        # 추가진입: 불리하게 +3% 이동 시 2차/3차
-        add_level = should_live_add_entry(price)
-        if add_level:
-            signal = pos.get("signal") or {"base": pos.get("base"), "symbol": pos.get("symbol")}
-            try:
-                new_pos, order_result, available, margin_usdt, order_value_usdt = await _place_live_short_for_signal(signal, level=add_level)
-                await safe_send(bot, chat_id, live_add_success_message(new_pos, order_result, add_level))
-            except Exception as e:
-                await safe_send(bot, chat_id, f"❌ 실전 추가진입 실패\n\n{type(e).__name__}: {e}")
-
-        # TP: 레버리지 기준 +12%
-        state = load_state()
-        pos = state.get("live_position")
-        if pos and float(pos.get("last_pnl_pct", 0) or 0) >= float(state["settings"].get("tp_leveraged_pct", 12)):
-            try:
-                close_result = await close_short_market_position_with_fills(api["api_key"], api["api_secret"], pos["symbol"])
+            add_level = should_live_add_entry(price)
+            if add_level:
+                signal = pos.get("signal") or {"base": pos.get("base"), "symbol": pos.get("symbol")}
                 try:
-                    close_price = await get_bingx_symbol_price(pos["symbol"])
-                except Exception:
-                    close_price = None
-                closed = save_live_close(close_result, close_price=close_price)
-                await safe_send(bot, chat_id, live_close_success_message(closed))
-            except Exception as e:
-                await safe_send(bot, chat_id, f"❌ 실전 TP 청산 실패\n\n{type(e).__name__}: {e}\nBingX 앱에서 포지션을 직접 확인하세요.")
+                    new_pos, order_result, available, margin_usdt, order_value_usdt = await _place_live_short_for_signal(signal, level=add_level)
+                    await safe_send(bot, uid, live_add_success_message(new_pos, order_result, add_level))
+                except Exception as e:
+                    await safe_send(bot, uid, f"❌ 실전 추가진입 실패\n\n{type(e).__name__}: {e}")
 
+            state = load_state()
+            pos = state.get("live_position")
+            if pos and float(pos.get("last_pnl_pct", 0) or 0) >= float(state["settings"].get("tp_leveraged_pct", 12)):
+                try:
+                    close_result = await close_short_market_position_with_fills(api["api_key"], api["api_secret"], pos["symbol"])
+                    try:
+                        close_price = await get_bingx_symbol_price(pos["symbol"])
+                    except Exception:
+                        close_price = None
+                    closed = save_live_close(close_result, close_price=close_price)
+                    await safe_send(bot, uid, live_close_success_message(closed))
+                except Exception as e:
+                    await safe_send(bot, uid, f"❌ 실전 TP 청산 실패\n\n{type(e).__name__}: {e}\nBingX 앱에서 포지션을 직접 확인하세요.")
     except Exception as e:
-        print(f"[LIVE POSITION WATCH ERROR] {type(e).__name__}: {e}")
+        print(f"[MULTIUSER POSITION WATCH ERROR] {type(e).__name__}: {e}")
 
 async def sl_check_job(bot, chat_id):
     print(f"[SL CHECK START] {now_kst_text()}")
-
-    try:
-        state = load_state()
-        if not state.get("running"):
-            print("[SL SKIP] trading off")
-            return
-
-        pos = state.get("live_position")
-        if not pos:
-            print("[SL SKIP] no live position")
-            return
-
-        api = load_bingx_api()
-        if not api:
-            return
-
-        price = await get_bingx_symbol_price(pos["symbol"])
-        pos = update_live_position_metrics(price)
-
-        pnl = float(pos.get("last_pnl_pct", 0) or 0)
-        sl = float(state["settings"].get("sl_leveraged_pct", -30))
-
-        if pnl <= sl:
-            close_result = await close_short_market_position_with_fills(api["api_key"], api["api_secret"], pos["symbol"])
-            closed = save_live_close(close_result, close_price=price)
-            await safe_send(bot, chat_id, live_close_success_message(closed))
-        else:
-            await safe_send(bot, chat_id, f"🕓 [16:00 LIVE SL CHECK]\n\n현재 손익률 {pnl:+.2f}%\n손절 기준 {sl:.2f}% 이하 아님 → 손절하지 않고 계속 홀딩합니다.\n이후에도 30초 감시는 유지되고, TP +12% 도달 시 자동 익절합니다.")
-
-    except Exception as e:
-        print(f"[SL CHECK ERROR] {type(e).__name__}: {e}")
-        await safe_send(bot, chat_id, f"❌ [16:00 LIVE SL CHECK ERROR]\n\n{type(e).__name__}: {e}")
+    for u in iter_live_users():
+        uid = str(u.get("user_chat_id"))
+        try:
+            set_current_user(uid)
+            state = load_state()
+            pos = state.get("live_position")
+            if not pos:
+                continue
+            api = load_bingx_api()
+            if not api:
+                continue
+            price = await get_bingx_symbol_price(pos["symbol"])
+            pos = update_live_position_metrics(price)
+            pnl = float(pos.get("last_pnl_pct", 0) or 0)
+            sl = float(state["settings"].get("sl_leveraged_pct", -30))
+            if pnl <= sl:
+                close_result = await close_short_market_position_with_fills(api["api_key"], api["api_secret"], pos["symbol"])
+                closed = save_live_close(close_result, close_price=price)
+                await safe_send(bot, uid, live_close_success_message(closed))
+            else:
+                await safe_send(bot, uid, f"🕓 [16:00 LIVE SL CHECK]\n\n현재 손익률 {pnl:+.2f}%\n손절 기준 {sl:.2f}% 이하 아님 → 손절하지 않고 계속 홀딩합니다.\n이후에도 30초 감시는 유지되고, TP +12% 도달 시 자동 익절합니다.")
+        except Exception as e:
+            await safe_send(bot, uid, f"❌ [16:00 LIVE SL CHECK ERROR]\n\n{type(e).__name__}: {e}")
 
 def setup_scheduler(app, chat_id):
     timezone = pytz.timezone(KST_TIMEZONE)
@@ -371,18 +341,18 @@ def setup_scheduler(app, chat_id):
     )
 
     scheduler.add_job(
-        position_watch_job, "interval", seconds=30, id="live_position_watch_30s",
+        position_watch_job, "interval", seconds=30, id="multiuser_live_position_watch_30s",
         args=[app.bot, chat_id], replace_existing=True, max_instances=1
     )
     scheduler.add_job(
-        sl_check_job, "cron", hour=16, minute=0, id="1600_live_sl_check",
+        sl_check_job, "cron", hour=16, minute=0, id="1600_multiuser_live_sl_check",
         args=[app.bot, chat_id], replace_existing=True
     )
 
     scheduler.start()
 
     print("====================================")
-    print("[SCHEDULER REGISTERED]")
+    print("[MULTIUSER SCHEDULER REGISTERED]")
     print(f"Timezone: {KST_TIMEZONE}")
     for job in scheduler.get_jobs():
         print(f"- {job.id} next={job.next_run_time}")

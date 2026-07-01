@@ -651,46 +651,70 @@ def start_blocked_by_approval_message(status):
 관리자 승인 후 트레이딩을 시작할 수 있습니다."""
 
 
-def admin_monitor_message(snapshot, balance=None):
-    state = snapshot.get("state", {})
-    stats = snapshot.get("stats", {})
-    pos = state.get("live_position")
-    balance_text = f"{float(balance):,.2f} USDT" if balance is not None else "조회 실패/미등록"
 
-    if pos:
-        pos_text = f"{pos.get('base')} SHORT / {float(pos.get('last_pnl_pct', 0) or 0):+.2f}%"
-    else:
-        pos_text = "없음"
+
+def admin_monitor_message(snapshot, balance=None):
+    users = snapshot.get("users") or []
+    balance_map = balance if isinstance(balance, dict) else {}
+
+    lines = ""
+    total_pnl = 0.0
+    running_count = 0
+    approved_count = 0
+    holding_count = 0
+
+    for idx, u in enumerate(users, 1):
+        uid = str(u.get("user_chat_id") or "-")
+        bal = balance_map.get(uid)
+        bal_text = f"{float(bal):,.2f} USDT" if bal is not None else "조회 실패/미등록"
+        status = approval_status_text(u.get("approval_status"))
+        running = "ON" if u.get("running") else "OFF"
+        if u.get("approval_status") == "APPROVED":
+            approved_count += 1
+        if u.get("running"):
+            running_count += 1
+
+        pos = u.get("live_position")
+        if pos:
+            holding_count += 1
+            pos_text = f"{pos.get('base')} SHORT {float(pos.get('last_pnl_pct', 0) or 0):+.2f}%"
+        else:
+            pos_text = "없음"
+
+        # user stats from embedded trades
+        closed = [t for t in u.get("trades", []) if t.get("type") == "CLOSE"]
+        pnl = sum(float((t.get("position") or {}).get("realized_pnl", 0) or 0) for t in closed)
+        total_pnl += pnl
+        wins = sum(1 for t in closed if float((t.get("position") or {}).get("realized_pnl", 0) or 0) > 0)
+        losses = sum(1 for t in closed if float((t.get("position") or {}).get("realized_pnl", 0) or 0) < 0)
+        win_rate = (wins / len(closed) * 100) if closed else 0.0
+
+        lines += f"""[{idx}] chat_id: {uid}
+상태: {status} / 트레이딩 {running}
+API: {'✅' if u.get('api_registered') else '❌'} / 시드: {'자동조회' if u.get('seed_mode') == 'auto' else '고정'}
+잔고: {bal_text}
+포지션: {pos_text}
+손익: {pnl:+.2f} USDT / 승률 {win_rate:.1f}% ({wins}승/{losses}패)
+가입일: {u.get('joined_at') or '-'}
+
+"""
+
+    if not lines:
+        lines = "등록된 유저가 없습니다."
 
     return f"""👑 관리자 대시보드
 
-[등록 유저]
-1명
+전체 유저: {len(users)}명
+승인 완료: {approved_count}명
+트레이딩 ON: {running_count}명
+포지션 보유: {holding_count}명
+전체 누적 손익: {total_pnl:+.2f} USDT
 
-[사용자 1]
-chat_id : {state.get('user_chat_id') or '-'}
-거래소 : BingX Futures
-API : {'✅ 등록됨' if snapshot.get('api') else '❌ 미등록'}
-승인 상태 : {approval_status_text(state.get('approval_status'))}
-트레이딩 : {'ON' if state.get('running') else 'OFF'}
-시드 방식 : {'자동조회' if state.get('seed_mode') == 'auto' else '고정'}
-선물 잔고 : {balance_text}
-가입일 : {state.get('joined_at') or '-'}
-
-[현재 포지션]
-{pos_text}
-
-[수익]
-누적 : {float(stats.get('total_pnl', 0) or 0):+.2f} USDT
-이번 주 : {float(stats.get('week_pnl', 0) or 0):+.2f} USDT
-승률 : {float(stats.get('win_rate', 0) or 0):.1f}%
-거래 : {int(stats.get('total', 0) or 0)}건
-
-[관리 기능]
-✅ 승인 / ❌ 거절 / ⏸ 보류
-🔄 잔고·포지션 새로고침
-⏸ 사용자 강제 중지
+━━━━━━━━━━━━━━
+{lines}━━━━━━━━━━━━━━
+관리 기능:
+🔄 새로고침
+⏸ 전체 강제 중지
 
 ※ 관리자 버튼은 ADMIN_CHAT_ID와 일치하는 계정에만 표시됩니다.
-※ 다음 확장 단계에서 친구별 API/시드가 분리된 다중 유저 저장소로 확장합니다."""
-
+※ 각 유저는 chat_id별 API/시드/승인/포지션/거래내역이 독립 저장됩니다."""
