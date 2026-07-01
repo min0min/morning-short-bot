@@ -2,7 +2,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
 from config import TELEGRAM_BOT_TOKEN, BOT_VERSION, BOT_VERSION
-from storage import load_state, save_state, load_trades, calc_trade_stats, save_active_chat_id
+from storage import load_state, save_state, load_trades, calc_trade_stats, save_active_chat_id, save_bingx_api, mark_bingx_api_tested, set_seed_auto_mode, set_seed_fixed_mode, load_bingx_api
 from messages import (
     main_menu_text,
     status_message,
@@ -11,14 +11,22 @@ from messages import (
     backtest_result_message,
     weekly_backtest_result_message,
     stats_message,
+    api_register_guide_message,
+    seed_setting_message,
+    bingx_connection_success_message,
+    bingx_connection_fail_message,
 )
 from exchanges import get_crosslisted_futures_snapshot, get_exchange_debug_text
 from strategy import create_position
 from backtest import run_date_backtest, run_recent_days_backtest
 from scanner import scan_latest_closed_15m_oc
+from bingx import test_bingx_read_connection, get_bingx_swap_balance
 
 WAITING_SEED = "waiting_seed"
 WAITING_BACKTEST_DATE = "waiting_backtest_date"
+WAITING_BINGX_API_KEY = "waiting_bingx_api_key"
+WAITING_BINGX_API_SECRET = "waiting_bingx_api_secret"
+TEMP_BINGX_API_KEY = "temp_bingx_api_key"
 
 def main_keyboard():
     rows = [
@@ -60,9 +68,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "seed":
         context.user_data[WAITING_SEED] = True
-        await query.edit_message_text(
-            "💰 시드 설정\n\n카피트레이딩에 사용할 총 시드(USDT)를 입력하세요.\n\n예) 1000 → 1,000 USDT 기준으로 비중 계산\n0 입력 시 → 향후 거래소 잔고 자동 조회\n\n❌ 취소하려면 /start"
-        )
+        await query.edit_message_text(seed_setting_message())
 
     elif data == "start_paper":
         state["running"] = True
@@ -175,7 +181,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     elif data == "api":
-        await query.edit_message_text("🔑 API 키 등록\n\n현재 버전은 PAPER MODE라 주문 API가 필요 없습니다.\n가격 조회는 공개 API로 진행합니다.", reply_markup=main_keyboard())
+        await query.edit_message_text(api_register_guide_message(), reply_markup=api_agree_keyboard())
+
+    elif data == "api_agree":
+        context.user_data[WAITING_BINGX_API_KEY] = True
+        await query.edit_message_text(
+            "🔑 BingX API Key를 입력해주세요.\n\n입력한 메시지는 등록 후 즉시 삭제를 시도합니다.\n❌ 취소하려면 /start"
+        )
+
+    elif data == "cancel_to_menu":
+        await query.edit_message_text(main_menu_text(), reply_markup=main_keyboard())
 
     elif data == "notice":
         await query.edit_message_text(
@@ -189,6 +204,57 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat:
         save_active_chat_id(update.effective_chat.id)
+    if context.user_data.get(WAITING_BINGX_API_KEY):
+        api_key = update.message.text.strip()
+        context.user_data[WAITING_BINGX_API_KEY] = False
+        context.user_data[TEMP_BINGX_API_KEY] = api_key
+        context.user_data[WAITING_BINGX_API_SECRET] = True
+
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+        await update.message.reply_text(
+            "✅ API Key 입력 완료!\n\n이제 Secret Key를 입력해주세요.\n입력한 메시지는 등록 후 즉시 삭제를 시도합니다.\n❌ 취소하려면 /start"
+        )
+        return
+
+    if context.user_data.get(WAITING_BINGX_API_SECRET):
+        api_secret = update.message.text.strip()
+        api_key = context.user_data.get(TEMP_BINGX_API_KEY)
+
+        context.user_data[WAITING_BINGX_API_SECRET] = False
+        context.user_data[TEMP_BINGX_API_KEY] = None
+
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+        if not api_key or not api_secret:
+            await update.message.reply_text("❌ API 정보가 비어있습니다. /start 후 다시 등록해주세요.", reply_markup=main_keyboard())
+            return
+
+        save_bingx_api(api_key, api_secret)
+
+        checking_msg = await update.message.reply_text("🔍 BingX API 연결 테스트중...\n잔고 조회가 가능한지 확인합니다.")
+
+        try:
+            result = await test_bingx_read_connection(api_key, api_secret)
+            mark_bingx_api_tested(True)
+            await checking_msg.edit_text(
+                bingx_connection_success_message(result["available_usdt"], result["positions_count"]),
+                reply_markup=main_keyboard()
+            )
+        except Exception as e:
+            mark_bingx_api_tested(False)
+            await checking_msg.edit_text(
+                bingx_connection_fail_message(f"{type(e).__name__}: {e}"),
+                reply_markup=main_keyboard()
+            )
+        return
+
     if context.user_data.get(WAITING_BACKTEST_DATE):
         date_text = update.message.text.strip()
         try:
@@ -226,18 +292,30 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             value = float(text)
             if value == 0:
-                await update.message.reply_text("🔄 0 입력 확인\n\n향후 거래소 잔고 자동 조회 모드로 연결 예정입니다.\n현재 PAPER MODE에서는 고정 시드를 입력해주세요.")
+                api = load_bingx_api()
+                if not api:
+                    await update.message.reply_text("❌ BingX API가 등록되어 있지 않습니다.\n먼저 🔑 API 키 등록을 진행해주세요.", reply_markup=main_keyboard())
+                    return
+
+                result = await get_bingx_swap_balance(api["api_key"], api["api_secret"])
+                available = float(result["available_usdt"])
+
+                set_seed_auto_mode()
+                context.user_data[WAITING_SEED] = False
+
+                await update.message.reply_text(
+                    f"✅ 시드 자동조회 모드 설정 완료\n\nBingX 사용 가능 잔고 : ${available:,.2f}\n\n다음 진입부터 매번 거래소 잔고를 다시 조회해서 비중을 계산합니다.\n\n1차 2% : ${available*0.02:,.2f}\n2차 1% : ${available*0.01:,.2f}\n3차 1% : ${available*0.01:,.2f}\n\n상태 : 승인 대기 / PAPER 검증",
+                    reply_markup=main_keyboard()
+                )
                 return
+
             if value <= 0:
                 raise ValueError()
 
-            state = load_state()
-            state["seed_usdt"] = value
-            state["paper_balance"] = value
-            save_state(state)
+            set_seed_fixed_mode(value)
             context.user_data[WAITING_SEED] = False
             await update.message.reply_text(
-                f"✅ 가상 시드 설정 완료\n\n가상 증거금 : ${value:,.2f}\n\n1차 진입 : ${value*0.02:,.2f}\n2차 진입 : ${value*0.01:,.2f}\n3차 진입 : ${value*0.01:,.2f}",
+                f"✅ 고정 시드 설정 완료\n\n기준 시드 : ${value:,.2f}\n\n1차 진입 : ${value*0.02:,.2f}\n2차 진입 : ${value*0.01:,.2f}\n3차 진입 : ${value*0.01:,.2f}\n\n상태 : 승인 대기 / PAPER 검증",
                 reply_markup=main_keyboard()
             )
         except Exception:

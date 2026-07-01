@@ -19,12 +19,18 @@ STATE_PATH = os.path.join(DATA_DIR, "state.json")
 TRADES_PATH = os.path.join(DATA_DIR, "trades.json")
 DAILY_SIGNALS_PATH = os.path.join(DATA_DIR, "daily_signals.json")
 ACTIVE_CHAT_PATH = os.path.join(DATA_DIR, "active_chat.json")
+BINGX_API_PATH = os.path.join(DATA_DIR, "bingx_api.json")
 
 DEFAULT_STATE = {
     "running": False,
     "seed_usdt": PAPER_SEED_USDT,
     "paper_balance": PAPER_SEED_USDT,
     "open_position": None,
+    "seed_mode": "fixed",
+    "exchange": "BingX",
+    "api_registered": False,
+    "api_tested": False,
+    "approval_status": "PAPER_ONLY",
     "settings": {
         "entry_1_pct": DEFAULT_ENTRY_1_PCT,
         "entry_2_pct": DEFAULT_ENTRY_2_PCT,
@@ -218,3 +224,58 @@ def get_active_chat_debug():
             "updated_at": None,
             "error": f"{type(e).__name__}: {e}",
         }
+
+
+def save_bingx_api(api_key, api_secret):
+    ensure_data_dir()
+    payload = {
+        "api_key": str(api_key).strip(),
+        "api_secret": str(api_secret).strip(),
+        "updated_at": datetime.now().isoformat(),
+    }
+    with open(BINGX_API_PATH, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    state = load_state()
+    state["exchange"] = "BingX"
+    state["api_registered"] = True
+    save_state(state)
+
+    print("[BINGX API SAVED] api_key=***")
+    return payload
+
+def load_bingx_api():
+    ensure_data_dir()
+    if not os.path.exists(BINGX_API_PATH):
+        return None
+    try:
+        with open(BINGX_API_PATH, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if not payload.get("api_key") or not payload.get("api_secret"):
+            return None
+        return payload
+    except Exception as e:
+        print(f"[BINGX API LOAD ERROR] {type(e).__name__}: {e}")
+        return None
+
+def mark_bingx_api_tested(ok=True):
+    state = load_state()
+    state["api_tested"] = bool(ok)
+    save_state(state)
+
+def set_seed_auto_mode():
+    state = load_state()
+    state["seed_mode"] = "auto"
+    state["seed_usdt"] = 0
+    save_state(state)
+
+def set_seed_fixed_mode(value):
+    state = load_state()
+    state["seed_mode"] = "fixed"
+    state["seed_usdt"] = float(value)
+    state["paper_balance"] = float(value)
+    save_state(state)
+
+def is_seed_auto():
+    state = load_state()
+    return state.get("seed_mode") == "auto" or float(state.get("seed_usdt", 0) or 0) == 0

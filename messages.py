@@ -233,48 +233,60 @@ def stats_message(stats):
 최악 거래 : {worst_text}"""
 
 
-def position_report_message(pos, current_price):
-    """
-    오픈 포지션 15분 단위 리포트.
-    SHORT 기준이며, strategy.update_open_position_metrics 이후의 pos를 받는 것을 권장.
-    """
-    signal = pos.get("signal", {})
-    entries = pos.get("entries", [])
+def api_register_guide_message():
+    return """🔐 BingX API 등록 안내
 
-    entry_lines = ""
-    for e in entries:
-        entry_lines += f"{e.get('level')}차: {e.get('price')} / 증거금 {fmt_usdt(e.get('margin', 0))}\n"
+본 봇은 자동매매 및 리스크 관리를 위해 API를 사용합니다.
 
-    last_pnl = float(pos.get("last_pnl_pct", 0))
-    max_pnl = float(pos.get("max_pnl_pct", 0))
-    min_pnl = float(pos.get("min_pnl_pct", 0))
+사용 목적:
+✅ 잔고 조회
+✅ 포지션 조회
+✅ 손익/거래내역 조회
+✅ 실전 모드 승인 후 주문 실행
 
-    status_emoji = "🟢" if last_pnl > 0 else ("🔴" if last_pnl < 0 else "⚪")
+사용하지 않는 기능:
+❌ 출금
+❌ 자산 이동
+❌ 계정 정보 변경
 
-    return f"""{status_emoji} [15분 포지션 리포트]
+입력한 API 메시지는 등록 후 즉시 삭제를 시도합니다.
+출금 권한이 없는 API 사용을 권장합니다.
 
-종목 : {pos.get('base')}
-심볼 : {pos.get('symbol')}
-방향 : SHORT
+동의하시나요?"""
 
-현재가 : {current_price}
-평균 진입가 : {pos.get('avg_price'):.8f}
+def seed_setting_message():
+    return """💰 시드 설정
 
-현재 수익률 : {last_pnl:.2f}%
-최대 유리 : {max_pnl:.2f}% @ {pos.get('max_pnl_price', '-')}
-최대 불리 : {min_pnl:.2f}% @ {pos.get('min_pnl_price', '-')}
+사용할 기준 시드를 입력하세요.
 
-진입 차수 : {len(entries)}차
-총 증거금 : {fmt_usdt(pos.get('total_margin', 0))}
-총 포지션 : {fmt_usdt(pos.get('total_notional', 0))}
+예)
+1000 → 1,000 USDT 고정 기준으로 비중 계산
+0 → BingX 사용 가능 잔고를 매번 자동 조회하여 비중 계산
 
-진입 내역:
-{entry_lines}
-TP 기준 : 레버리지 기준 +12%
-SL 체크 : 16:00 이후 레버리지 기준 -30%
+현재 전략:
+1차 2%
+2차 1%
+3차 1%
 
-진입 신호:
-O→C +{signal.get('change_pct', 0):.2f}%
-H참고 +{signal.get('peak_change_pct', 0):.2f}%
+❌ 취소하려면 /start"""
 
-상태 : PAPER MODE"""
+def bingx_connection_success_message(available_usdt, positions_count=0):
+    return f"""✅ BingX API 연결 테스트 완료
+
+잔고 조회 : 성공
+사용 가능 USDT : ${available_usdt:,.2f}
+오픈 포지션 수 : {positions_count}개
+
+이제 시드 설정을 진행해주세요.
+0 입력 시 이 잔고를 자동 조회 기준으로 사용합니다."""
+
+def bingx_connection_fail_message(error):
+    return f"""❌ BingX API 연결 테스트 실패
+
+{error}
+
+확인할 것:
+1. API Key / Secret 오타
+2. Read 권한 체크 여부
+3. Perpetual Futures 계정 접근 가능 여부
+4. IP 제한 설정 여부"""

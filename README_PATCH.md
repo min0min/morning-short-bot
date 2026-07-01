@@ -1,30 +1,25 @@
-# v3.5 Communication Stability Patch
+# v4.0 BingX Read API + Seed Auto Patch
 
-덮어쓸 파일:
+덮어쓸/추가 파일:
 - config.py
 - storage.py
+- messages.py
 - telegram_bot.py
-- scheduler.py
-- main.py
+- bingx.py
 
-핵심:
-- BOT_VERSION = FINAL v3.5 COMM-STABLE
-- 시작 메시지는 active_chat_id가 있을 때만 전송
-- active_chat_id가 없으면 BadRequest 없이 안전하게 스킵
-- /start 입력 시 active_chat_id 저장 + 텔레그램에 저장 완료 출력
-- callback/text 입력 시에도 active_chat_id 갱신
-- 모든 스케줄러 알림은 active_chat_id 우선 사용
-- ENV TELEGRAM_CHAT_ID는 fallback으로만 사용
-- 로그에 CHAT SOURCE 출력
-- 기존 전략/스케줄 유지:
-  - 09:15:20 PRIMARY
-  - 09:16:10 RETRY_1
-  - 09:17:10 FINAL_RETRY
-  - 30초 포지션 감시
-  - 16:00 SL 체크
+기능:
+- BingX API 등록 안내/동의 문구 추가
+- API Key / Secret 입력 플로우
+- 입력 메시지 삭제 시도
+- BingX Read API 연결 테스트
+- USDT 선물 잔고 조회
+- 포지션 조회 개수 표시
+- 시드 설정에서 0 입력 시 BingX 사용 가능 잔고 자동 조회
+- 이후 자동조회 모드(seed_mode=auto) 저장
+- 고정 시드와 자동조회 시드 구분
+- 상태 화면에 거래소/API/시드 방식 표시
 
-배포 후 확인:
-1. Railway 로그에 FINAL v3.5 COMM-STABLE started 표시
-2. Telegram에서 /start
-3. "CHAT ID 저장 완료 / 버전 FINAL v3.5 COMM-STABLE" 메시지 확인
-4. Railway 로그에 [CHAT ID SAVED] 확인
+주의:
+- v4.0은 주문 기능 없음
+- BingX API 권한은 Read만 사용
+- Perpetual Futures Trading 권한은 실전 주문 단계(v4.3 이후)에만 추가 권장
