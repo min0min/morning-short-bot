@@ -1,8 +1,8 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
-from config import TELEGRAM_BOT_TOKEN, BOT_VERSION, REAL_TEST_SYMBOL, REAL_TEST_MARGIN_USDT, BOT_VERSION
-from storage import load_state, save_state, load_trades, calc_trade_stats, save_active_chat_id, save_bingx_api, mark_bingx_api_tested, set_seed_auto_mode, set_seed_fixed_mode, load_bingx_api
+from config import TELEGRAM_BOT_TOKEN, BOT_VERSION, REAL_TEST_SYMBOL, REAL_TEST_MARGIN_USDT, REAL_FIXED_LEVERAGE, BOT_VERSION
+from storage import load_state, save_state, load_trades, calc_trade_stats, save_active_chat_id, save_bingx_api, mark_bingx_api_tested, set_seed_auto_mode, set_seed_fixed_mode, load_bingx_api, save_real_test_open, save_real_test_close, get_real_test_stats
 from messages import (
     main_menu_text,
     status_message,
@@ -20,12 +20,14 @@ from messages import (
     real_order_fail_message,
     real_close_success_message,
     real_close_fail_message,
+    real_close_success_message_with_pnl,
+    real_test_stats_message,
 )
 from exchanges import get_crosslisted_futures_snapshot, get_exchange_debug_text
 from strategy import create_position
 from backtest import run_date_backtest, run_recent_days_backtest
 from scanner import scan_latest_closed_15m_oc
-from bingx import test_bingx_read_connection, get_bingx_swap_balance, place_short_market_order, close_short_market_position
+from bingx import test_bingx_read_connection, get_bingx_swap_balance, place_short_market_order_with_leverage, close_short_market_position_with_fills, get_bingx_symbol_price
 
 WAITING_SEED = "waiting_seed"
 WAITING_BACKTEST_DATE = "waiting_backtest_date"
@@ -111,15 +113,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = "📋 최근 거래 내역\n\n"
             for t in trades:
                 p = t.get("position", {})
-                msg += f"- {t.get('type')} / {p.get('base')} / {t.get('reason', p.get('close_reason', ''))}\n"
+                pnl = p.get("realized_pnl")
+                pnl_txt = ""
+                if pnl is not None:
+                    pnl_txt = f" / PnL ${float(pnl):,.4f}"
+                msg += f"- {t.get('type')} / {p.get('base') or p.get('symbol')} / {t.get('reason', p.get('close_reason', ''))}{pnl_txt}\n"
         await query.edit_message_text(msg, reply_markup=main_keyboard())
 
     elif data == "profit":
-        pnl = float(state["paper_balance"]) - float(state["seed_usdt"])
-        await query.edit_message_text(
-            f"💵 수익 현황\n\n시작 시드 : ${state['seed_usdt']:,.2f}\n현재 잔고 : ${state['paper_balance']:,.2f}\n누적 손익 : ${pnl:,.2f}",
-            reply_markup=main_keyboard()
-        )
+        stats = get_real_test_stats()
+        await query.edit_message_text(real_test_stats_message(stats), reply_markup=main_keyboard())
 
     elif data == "stats":
         stats = calc_trade_stats()
@@ -219,12 +222,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🧪 실전 테스트 주문 전송중...\n심볼: {REAL_TEST_SYMBOL}\n금액: ${REAL_TEST_MARGIN_USDT}"
         )
         try:
-            result = await place_short_market_order(
+            result = await place_short_market_order_with_leverage(
                 api["api_key"],
                 api["api_secret"],
                 REAL_TEST_SYMBOL,
                 REAL_TEST_MARGIN_USDT,
+                REAL_FIXED_LEVERAGE,
             )
+            save_real_test_open(result)
             await query.message.reply_text(real_order_success_message(result), reply_markup=main_keyboard())
         except Exception as e:
             await query.message.reply_text(
@@ -243,12 +248,17 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(f"🧪 실전 테스트 포지션 청산 시도중...\n심볼: {REAL_TEST_SYMBOL}")
         try:
-            result = await close_short_market_position(
+            result = await close_short_market_position_with_fills(
                 api["api_key"],
                 api["api_secret"],
                 REAL_TEST_SYMBOL,
             )
-            await query.message.reply_text(real_close_success_message(result), reply_markup=main_keyboard())
+            try:
+                close_price = await get_bingx_symbol_price(REAL_TEST_SYMBOL)
+            except Exception:
+                close_price = None
+            closed_pos = save_real_test_close(result, close_price=close_price)
+            await query.message.reply_text(real_close_success_message_with_pnl(result, closed_pos), reply_markup=main_keyboard())
         except Exception as e:
             await query.message.reply_text(
                 real_close_fail_message(f"{type(e).__name__}: {e}"),

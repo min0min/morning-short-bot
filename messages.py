@@ -360,35 +360,39 @@ def real_order_test_warning_message(symbol="DOGE-USDT", margin_usdt=1.0):
 
 def real_order_success_message(result):
     raw = result.get("raw", {})
-    order_id = "-"
-    data = raw.get("data")
-    if isinstance(data, dict):
+    order_id = result.get("order_id") or "-"
+    data = raw.get("data") if isinstance(raw, dict) else None
+    if order_id == "-" and isinstance(data, dict):
         order_id = data.get("orderId") or data.get("orderID") or data.get("id") or "-"
 
-    adjusted_text = "아니오"
-    if result.get("adjusted"):
-        adjusted_text = "예"
+    adjusted_text = "예" if result.get("adjusted") else "아니오"
+    fill = result.get("fill") or {}
 
-    rule = result.get("rule", {})
-    min_qty = rule.get("min_qty")
-    min_notional = rule.get("min_notional")
+    filled_avg = result.get("filled_avg_price") or fill.get("avg_price") or result.get("price_ref")
+    executed_qty = result.get("executed_qty") or fill.get("executed_qty") or result.get("qty")
+    fill_source = fill.get("source", "fallback")
+
+    lev_msg = f"{result.get('leverage', 4)}배"
+    lev_err = result.get("leverage_error")
+    if lev_err:
+        lev_msg += f" (설정 확인 필요: {lev_err})"
 
     return f"""✅ 실전 테스트 주문 성공
 
 거래소 : BingX Futures
 동작 : SHORT 진입
 심볼 : {result.get('symbol')}
+레버리지 : {lev_msg}
 
 요청 금액 : ${float(result.get('margin_usdt', 0)):,.2f}
-참고 가격 : {result.get('price_ref')}
-
 요청 수량 : {float(result.get('requested_qty', 0)):,.6f}
-실제 주문 수량 : {result.get('qty')}
-예상 주문금액 : ${float(result.get('actual_notional_usdt', 0)):,.2f}
 
+실제 주문 수량 : {executed_qty}
+체결 평균가 : {filled_avg}
+체결 정보 출처 : {fill_source}
+
+예상 주문금액 : ${float(result.get('actual_notional_usdt', 0)):,.2f}
 거래소 규칙 자동보정 : {adjusted_text}
-최소 수량 : {min_qty if min_qty else '거래소 응답 기준'}
-최소 금액 : {min_notional if min_notional else '거래소 응답 기준'}
 
 Order ID : {order_id}
 
@@ -430,3 +434,61 @@ def real_close_fail_message(error):
 {error}
 
 포지션이 남아있다면 BingX 앱에서 직접 확인 후 수동 청산하세요."""
+
+
+def real_close_success_message_with_pnl(result, closed_pos):
+    raw = result.get("raw", {})
+    order_id = result.get("order_id") or "-"
+    data = raw.get("data") if isinstance(raw, dict) else None
+    if order_id == "-" and isinstance(data, dict):
+        order_id = data.get("orderId") or data.get("orderID") or data.get("id") or "-"
+
+    pnl = float(closed_pos.get("realized_pnl", 0) or 0)
+    pnl_pct = float(closed_pos.get("pnl_pct", 0) or 0)
+    close_price = closed_pos.get("close_price") or "-"
+    source = closed_pos.get("realized_pnl_source", "unknown")
+    fee = float(closed_pos.get("fee", 0) or 0)
+
+    return f"""✅ 실전 테스트 청산 성공
+
+거래소 : BingX Futures
+동작 : SHORT 청산
+심볼 : {result.get('symbol')}
+청산 수량 : {closed_pos.get('qty')}
+청산 평균가 : {close_price}
+
+실현손익 : ${pnl:,.6f}
+수익률 : {pnl_pct:+.4f}%
+수수료 : ${fee:,.6f}
+손익 출처 : {source}
+
+Order ID : {order_id}
+
+실전 주문 엔진 테스트 완료.
+거래내역/수익현황에 반영했습니다."""
+
+
+def real_test_stats_message(stats):
+    total = int(stats.get("total", 0))
+    wins = int(stats.get("wins", 0))
+    losses = int(stats.get("losses", 0))
+    win_rate = float(stats.get("win_rate", 0) or 0)
+    total_pnl = float(stats.get("total_pnl", 0) or 0)
+    best = stats.get("best") or {}
+    worst = stats.get("worst") or {}
+
+    return f"""💵 수익 현황
+
+[실전 테스트 기준]
+
+총 거래 : {total}회
+승 : {wins}회
+패 : {losses}회
+승률 : {win_rate:.2f}%
+
+누적 손익 : ${total_pnl:,.4f}
+
+최고 거래 : {best.get('symbol', '없음')} {float(best.get('pnl_pct', 0) or 0):+.4f}% / ${float(best.get('pnl', 0) or 0):,.4f}
+최악 거래 : {worst.get('symbol', '없음')} {float(worst.get('pnl_pct', 0) or 0):+.4f}% / ${float(worst.get('pnl', 0) or 0):,.4f}
+
+※ v4.3.3은 BingX 체결/실현손익 데이터를 우선 사용합니다. 거래소가 해당 값을 반환하지 않는 경우에만 참고가 기준 fallback을 사용합니다."""
