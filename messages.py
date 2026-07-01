@@ -662,12 +662,12 @@ def admin_monitor_message(snapshot, balance=None):
     else:
         pos_text = "없음"
 
-    return f"""👑 관리자 모니터링
+    return f"""👑 관리자 대시보드
 
-현재 등록 유저:
+[등록 유저]
 1명
 
-사용자:
+[사용자 1]
 chat_id : {state.get('user_chat_id') or '-'}
 거래소 : BingX Futures
 API : {'✅ 등록됨' if snapshot.get('api') else '❌ 미등록'}
@@ -677,15 +677,20 @@ API : {'✅ 등록됨' if snapshot.get('api') else '❌ 미등록'}
 선물 잔고 : {balance_text}
 가입일 : {state.get('joined_at') or '-'}
 
-현재 포지션:
+[현재 포지션]
 {pos_text}
 
-수익:
+[수익]
 누적 : {float(stats.get('total_pnl', 0) or 0):+.2f} USDT
 이번 주 : {float(stats.get('week_pnl', 0) or 0):+.2f} USDT
 승률 : {float(stats.get('win_rate', 0) or 0):.1f}%
 거래 : {int(stats.get('total', 0) or 0)}건
 
-관리 기능:
-승인/거절/보류는 승인 요청 카드에서 처리합니다.
-다음 단계에서 친구별 다중 유저 목록으로 확장합니다."""
+[관리 기능]
+✅ 승인 / ❌ 거절 / ⏸ 보류
+🔄 잔고·포지션 새로고침
+⏸ 사용자 강제 중지
+
+※ 관리자 버튼은 ADMIN_CHAT_ID와 일치하는 계정에만 표시됩니다.
+※ 다음 확장 단계에서 친구별 API/시드가 분리된 다중 유저 저장소로 확장합니다."""
+

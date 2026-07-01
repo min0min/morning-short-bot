@@ -42,7 +42,7 @@ WAITING_BINGX_API_KEY = "waiting_bingx_api_key"
 WAITING_BINGX_API_SECRET = "waiting_bingx_api_secret"
 TEMP_BINGX_API_KEY = "temp_bingx_api_key"
 
-def main_keyboard():
+def main_keyboard(chat_id=None):
     rows = [
         [InlineKeyboardButton("🔑 API 키 등록", callback_data="api"), InlineKeyboardButton("💰 시드 설정", callback_data="seed")],
         [InlineKeyboardButton("▶️ 트레이딩 시작", callback_data="start_paper"), InlineKeyboardButton("⏸ 트레이딩 중지", callback_data="stop_paper")],
@@ -54,10 +54,11 @@ def main_keyboard():
         [InlineKeyboardButton("🧪 날짜 백테스트", callback_data="date_backtest")],
         [InlineKeyboardButton("🧪 최근 7일 자동 검증", callback_data="recent7_backtest")],
         [InlineKeyboardButton("🔍 거래소 디버그", callback_data="debug_exchange")],
-        [InlineKeyboardButton("👑 관리자", callback_data="admin_monitor")],
         [InlineKeyboardButton("🧪 실전 주문 테스트", callback_data="real_order_test"), InlineKeyboardButton("🧪 실전 테스트 청산", callback_data="real_close_test")],
         [InlineKeyboardButton("📢 안내사항", callback_data="notice")],
     ]
+    if chat_id is not None and str(chat_id) == str(ADMIN_CHAT_ID):
+        rows.append([InlineKeyboardButton("👑 관리자", callback_data="admin_monitor")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -75,6 +76,16 @@ def real_order_confirm_keyboard():
     ])
 
 
+
+
+def admin_monitor_keyboard():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 새로고침", callback_data="admin_monitor"),
+            InlineKeyboardButton("⏸ 강제 중지", callback_data="admin_force_stop"),
+        ],
+        [InlineKeyboardButton("↩️ 메인 메뉴", callback_data="back_to_main_edit")],
+    ])
 
 def admin_approval_keyboard(chat_id):
     return InlineKeyboardMarkup([
@@ -117,10 +128,19 @@ def back_to_main_keyboard():
     ])
 
 async def send_main_menu(update_or_query):
+    chat_id = None
+    try:
+        chat_id = update_or_query.effective_chat.id
+    except Exception:
+        try:
+            chat_id = update_or_query.message.chat_id
+        except Exception:
+            chat_id = None
+
     if hasattr(update_or_query, "message") and update_or_query.message:
-        await update_or_query.message.reply_text(main_menu_text(), reply_markup=main_keyboard())
+        await update_or_query.message.reply_text(main_menu_text(), reply_markup=main_keyboard(chat_id))
     else:
-        await update_or_query.edit_message_text(main_menu_text(), reply_markup=main_keyboard())
+        await update_or_query.edit_message_text(main_menu_text(), reply_markup=main_keyboard(chat_id))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -178,12 +198,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "back_to_main_edit":
-        await query.edit_message_text(main_menu_text(), reply_markup=main_keyboard())
+        await query.edit_message_text(main_menu_text(), reply_markup=main_keyboard(update.effective_chat.id))
         return
 
     elif data == "admin_monitor":
         if not is_admin_chat(update.effective_chat.id):
-            await query.edit_message_text("⛔ 관리자만 접근할 수 있습니다.", reply_markup=main_keyboard())
+            await query.edit_message_text("⛔ 관리자만 접근할 수 있습니다.", reply_markup=main_keyboard(update.effective_chat.id))
             return
 
         balance = None
@@ -196,7 +216,17 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"[ADMIN MONITOR BALANCE ERROR] {type(e).__name__}: {e}")
 
         snapshot = get_admin_user_snapshot()
-        await query.edit_message_text(admin_monitor_message(snapshot, balance), reply_markup=main_keyboard())
+        await query.edit_message_text(admin_monitor_message(snapshot, balance), reply_markup=admin_monitor_keyboard())
+        return
+
+    elif data == "admin_force_stop":
+        if not is_admin_chat(update.effective_chat.id):
+            await query.edit_message_text("⛔ 관리자만 사용할 수 있습니다.", reply_markup=main_keyboard(update.effective_chat.id))
+            return
+        state = load_state()
+        state["running"] = False
+        save_state(state)
+        await query.edit_message_text("⏸ 관리자 강제 중지 완료\n\n트레이딩 실행: OFF", reply_markup=admin_monitor_keyboard())
         return
 
     if data == "seed":
@@ -408,7 +438,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data == "cancel_to_menu":
-        await query.edit_message_text(main_menu_text(), reply_markup=main_keyboard())
+        await query.edit_message_text(main_menu_text(), reply_markup=main_keyboard(update.effective_chat.id))
 
     elif data == "notice":
         await query.edit_message_text(
