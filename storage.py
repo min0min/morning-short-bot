@@ -991,3 +991,21 @@ def reset_live_daily_if_needed(state=None):
 def can_live_enter_today():
     state = reset_live_daily_if_needed(load_state())
     return int(state.get("live_daily_entry_count", 0) or 0) < 1
+
+
+# v4.6.2 API TEST FIX
+def mark_bingx_api_tested(ok=True):
+    """
+    멀티유저 저장소 기준 API 연결 테스트 결과 저장.
+    telegram_bot.py에서 mark_bingx_api_tested(True/False)를 호출하므로
+    ok 인자를 받을 수 있어야 한다.
+    """
+    state = load_state()
+    state["api_tested"] = bool(ok)
+    if ok:
+        state["api_registered"] = True
+    if state.get("approval_status") != "APPROVED":
+        state["approval_status"] = "PENDING"
+    save_state(state)
+    print(f"[BINGX API TESTED] chat_id={state.get('user_chat_id')} ok={bool(ok)}")
+    return state

@@ -1,21 +1,25 @@
-# v4.6.1 Send Main Menu Hotfix
+# v4.6.2 API Test Mark Fix Patch
 
 덮어쓸 파일:
 - config.py
+- storage.py
 - telegram_bot.py
+- messages.py
+- scheduler.py
 
 수정:
-- /start 실행 시 발생한 오류 수정
-  NameError: name 'target_chat_id' is not defined
+- API 등록 후 Secret Key 입력 시 발생한 오류 수정
+  TypeError: mark_bingx_api_tested() takes 0 positional arguments but 1 was given
 - 원인:
-  send_main_menu() 내부에서 실제 변수명은 chat_id인데 target_chat_id를 호출함
+  telegram_bot.py는 mark_bingx_api_tested(True/False)를 호출하는데 storage.py 함수가 인자를 받지 않음
 - 조치:
-  main_keyboard(chat_id)로 정확하게 수정
+  mark_bingx_api_tested(ok=True) 형태로 수정
+  유저별 users.json에 api_tested 성공/실패 상태 저장
 
-기존 v4.6.0 멀티유저 구조 유지:
-- chat_id별 API/시드/승인/포지션/거래내역 독립 저장
+기존 v4.6 멀티유저 구조 유지:
+- chat_id별 API / 시드 / 승인 / 포지션 / 거래내역 독립 저장
 - 관리자 전체 유저 모니터링
-- 09:15 멀티유저 실전 전략 유지
+- 승인 완료 + 트레이딩 ON 유저별 독립 주문
 
 전략 유지:
 - 09:15 O→C +3%
