@@ -593,3 +593,52 @@ def live_skip_message(reason):
 {reason}
 
 안전상 주문하지 않았습니다."""
+
+
+def approval_status_text(status):
+    mapping = {
+        "PENDING": "🟡 승인 대기",
+        "APPROVED": "✅ 승인 완료",
+        "REJECTED": "❌ 승인 거절",
+        "PAUSED": "⏸ 일시정지",
+        "BLOCKED": "⛔ 차단",
+        "PAPER_ONLY": "🧪 PAPER 전용",
+    }
+    return mapping.get(status, status or "미설정")
+
+def admin_approval_request_message(state, balance=None):
+    bal_text = f"{float(balance):,.2f} USDT" if balance is not None else "조회 전"
+    return f"""👤 신규 승인 요청
+
+chat_id : {state.get('user_chat_id')}
+거래소 : BingX Futures
+API : {'✅ 등록됨' if state.get('api_registered') else '❌ 미등록'}
+API 테스트 : {'✅ 완료' if state.get('api_tested') else '⏳ 대기'}
+시드 방식 : {'자동조회' if state.get('seed_mode') == 'auto' else '고정'}
+사용 가능 잔고 : {bal_text}
+승인 상태 : {approval_status_text(state.get('approval_status'))}
+
+관리자만 승인/거절/보류할 수 있습니다."""
+
+def user_approval_waiting_message():
+    return """🟡 승인 대기
+
+API 등록과 시드 설정이 완료되었습니다.
+관리자 승인 후 트레이딩을 시작할 수 있습니다."""
+
+def user_approved_message():
+    return """✅ 승인되었습니다!
+
+이제 ▶️ 트레이딩 시작을 눌러 자동매매를 시작하세요."""
+
+def user_rejected_message():
+    return """❌ 승인되지 않았습니다.
+
+관리자에게 문의해주세요."""
+
+def start_blocked_by_approval_message(status):
+    return f"""⛔ 트레이딩 시작 불가
+
+현재 승인 상태 : {approval_status_text(status)}
+
+관리자 승인 후 트레이딩을 시작할 수 있습니다."""

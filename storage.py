@@ -31,7 +31,10 @@ DEFAULT_STATE = {
     "exchange": "BingX",
     "api_registered": False,
     "api_tested": False,
-    "approval_status": "PAPER_ONLY",
+    "approval_status": "PENDING",
+    "user_chat_id": None,
+    "approved_at": None,
+    "admin_note": None,
     "real_test_position": None,
     "live_position": None,
     "live_daily_entry_date": None,
@@ -277,6 +280,8 @@ def set_seed_auto_mode():
     state = load_state()
     state["seed_mode"] = "auto"
     state["seed_usdt"] = 0
+    if state.get("approval_status") not in ("APPROVED", "PAUSED", "BLOCKED"):
+        state["approval_status"] = "PENDING"
     save_state(state)
 
 def set_seed_fixed_mode(value):
@@ -284,6 +289,8 @@ def set_seed_fixed_mode(value):
     state["seed_mode"] = "fixed"
     state["seed_usdt"] = float(value)
     state["paper_balance"] = float(value)
+    if state.get("approval_status") not in ("APPROVED", "PAUSED", "BLOCKED"):
+        state["approval_status"] = "PENDING"
     save_state(state)
 
 def is_seed_auto():
@@ -638,3 +645,43 @@ def get_live_trade_stats():
         "best": best,
         "worst": worst,
     }
+
+
+def set_user_pending_approval(chat_id=None):
+    state = load_state()
+    if chat_id is not None:
+        state["user_chat_id"] = str(chat_id)
+    if state.get("approval_status") not in ("APPROVED", "PAUSED", "BLOCKED"):
+        state["approval_status"] = "PENDING"
+    save_state(state)
+    return state
+
+def approve_user(chat_id=None):
+    state = load_state()
+    if chat_id is not None:
+        state["user_chat_id"] = str(chat_id)
+    state["approval_status"] = "APPROVED"
+    state["approved_at"] = datetime.now().isoformat()
+    save_state(state)
+    return state
+
+def reject_user(chat_id=None):
+    state = load_state()
+    if chat_id is not None:
+        state["user_chat_id"] = str(chat_id)
+    state["approval_status"] = "REJECTED"
+    save_state(state)
+    return state
+
+def pause_user(chat_id=None):
+    state = load_state()
+    if chat_id is not None:
+        state["user_chat_id"] = str(chat_id)
+    state["approval_status"] = "PAUSED"
+    state["running"] = False
+    save_state(state)
+    return state
+
+def is_user_approved():
+    state = load_state()
+    return state.get("approval_status") == "APPROVED"

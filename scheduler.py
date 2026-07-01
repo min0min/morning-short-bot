@@ -162,6 +162,10 @@ async def closed_15m_scan_job(bot, chat_id, attempt="PRIMARY"):
             await safe_send(bot, chat_id, f"⏸ [09:15 LIVE SCAN SKIP / {attempt}]\n\n트레이딩 실행 OFF 상태라 스캔을 건너뜁니다.")
             return
 
+        if state.get("approval_status") != "APPROVED":
+            await safe_send(bot, chat_id, f"⛔ [LIVE ENTRY BLOCKED]\n\n승인 상태: {state.get('approval_status')}\n관리자 승인 전에는 실전 주문을 실행하지 않습니다.")
+            return
+
         if state.get("live_position"):
             await safe_send(bot, chat_id, "⚠️ [LIVE ENTRY SKIP]\n\n이미 실전 오픈 포지션이 있어 신규 진입을 막았습니다.")
             return

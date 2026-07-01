@@ -1,8 +1,8 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
-from config import TELEGRAM_BOT_TOKEN, BOT_VERSION, REAL_TEST_SYMBOL, REAL_TEST_MARGIN_USDT, BOT_VERSION
-from storage import load_state, save_state, load_trades, calc_trade_stats, save_active_chat_id, save_bingx_api, mark_bingx_api_tested, set_seed_auto_mode, set_seed_fixed_mode, load_bingx_api, save_real_test_open, save_real_test_close, get_real_test_stats, get_live_trade_stats
+from config import TELEGRAM_BOT_TOKEN, BOT_VERSION, REAL_TEST_SYMBOL, REAL_TEST_MARGIN_USDT, ADMIN_CHAT_ID
+from storage import load_state, save_state, load_trades, calc_trade_stats, save_active_chat_id, save_bingx_api, mark_bingx_api_tested, set_seed_auto_mode, set_seed_fixed_mode, load_bingx_api, save_real_test_open, save_real_test_close, get_real_test_stats, get_live_trade_stats, set_user_pending_approval, approve_user, reject_user, pause_user
 from messages import (
     main_menu_text,
     status_message,
@@ -23,6 +23,11 @@ from messages import (
     real_close_success_message_with_pnl,
     real_test_stats_message,
     live_profit_message,
+    admin_approval_request_message,
+    user_approval_waiting_message,
+    user_approved_message,
+    user_rejected_message,
+    start_blocked_by_approval_message,
 )
 from exchanges import get_crosslisted_futures_snapshot, get_exchange_debug_text
 from strategy import create_position
@@ -67,6 +72,36 @@ def real_order_confirm_keyboard():
         [InlineKeyboardButton("❌ 취소", callback_data="cancel_to_menu")],
     ])
 
+
+
+def admin_approval_keyboard(chat_id):
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ 승인", callback_data=f"admin_approve:{chat_id}"),
+            InlineKeyboardButton("❌ 거절", callback_data=f"admin_reject:{chat_id}"),
+        ],
+        [InlineKeyboardButton("⏸ 보류/일시정지", callback_data=f"admin_pause:{chat_id}")],
+    ])
+
+def is_admin_chat(chat_id):
+    return str(chat_id) == str(ADMIN_CHAT_ID)
+
+
+async def send_admin_approval_request(context, chat_id, balance=None):
+    state = set_user_pending_approval(chat_id)
+    admin_id = str(ADMIN_CHAT_ID or "")
+    if not admin_id:
+        print("[ADMIN APPROVAL SKIP] ADMIN_CHAT_ID empty")
+        return
+    try:
+        await context.bot.send_message(
+            chat_id=admin_id,
+            text=admin_approval_request_message(state, balance),
+            reply_markup=admin_approval_keyboard(chat_id)
+        )
+    except Exception as e:
+        print(f"[ADMIN APPROVAL SEND ERROR] {type(e).__name__}: {e}")
+
 async def send_main_menu(update_or_query):
     if hasattr(update_or_query, "message") and update_or_query.message:
         await update_or_query.message.reply_text(main_menu_text(), reply_markup=main_keyboard())
@@ -89,14 +124,60 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_active_chat_id(update.effective_chat.id)
     state = load_state()
 
+    if data.startswith("admin_approve:"):
+        target_chat_id = data.split(":", 1)[1]
+        if not is_admin_chat(update.effective_chat.id):
+            await query.edit_message_text("⛔ 관리자만 승인할 수 있습니다.")
+            return
+        approve_user(target_chat_id)
+        await query.edit_message_text(f"✅ 승인 완료\n\nchat_id: {target_chat_id}")
+        try:
+            await context.bot.send_message(chat_id=target_chat_id, text=user_approved_message(), reply_markup=main_keyboard())
+        except Exception as e:
+            print(f"[APPROVAL USER NOTIFY ERROR] {type(e).__name__}: {e}")
+        return
+
+    elif data.startswith("admin_reject:"):
+        target_chat_id = data.split(":", 1)[1]
+        if not is_admin_chat(update.effective_chat.id):
+            await query.edit_message_text("⛔ 관리자만 거절할 수 있습니다.")
+            return
+        reject_user(target_chat_id)
+        await query.edit_message_text(f"❌ 승인 거절\n\nchat_id: {target_chat_id}")
+        try:
+            await context.bot.send_message(chat_id=target_chat_id, text=user_rejected_message(), reply_markup=main_keyboard())
+        except Exception as e:
+            print(f"[REJECT USER NOTIFY ERROR] {type(e).__name__}: {e}")
+        return
+
+    elif data.startswith("admin_pause:"):
+        target_chat_id = data.split(":", 1)[1]
+        if not is_admin_chat(update.effective_chat.id):
+            await query.edit_message_text("⛔ 관리자만 보류할 수 있습니다.")
+            return
+        pause_user(target_chat_id)
+        await query.edit_message_text(f"⏸ 보류/일시정지 완료\n\nchat_id: {target_chat_id}")
+        try:
+            await context.bot.send_message(chat_id=target_chat_id, text="⏸ 관리자에 의해 보류/일시정지 상태가 되었습니다.", reply_markup=main_keyboard())
+        except Exception as e:
+            print(f"[PAUSE USER NOTIFY ERROR] {type(e).__name__}: {e}")
+        return
+
     if data == "seed":
         context.user_data[WAITING_SEED] = True
         await query.edit_message_text(seed_setting_message())
 
     elif data == "start_paper":
+        state = load_state()
+        if state.get("approval_status") != "APPROVED":
+            await query.edit_message_text(
+                start_blocked_by_approval_message(state.get("approval_status")),
+                reply_markup=main_keyboard()
+            )
+            return
         state["running"] = True
         save_state(state)
-        await query.edit_message_text("✅ 트레이딩 시작\n\n상태 : TRADING MODE ON", reply_markup=main_keyboard())
+        await query.edit_message_text("✅ 트레이딩 시작\n\n상태 : LIVE TRADING ON", reply_markup=main_keyboard())
 
     elif data == "stop_paper":
         state["running"] = False
@@ -130,7 +211,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(msg, reply_markup=main_keyboard())
 
     elif data == "profit":
-        stats = get_real_test_stats, get_live_trade_stats()
+        stats = get_real_test_stats, get_live_trade_stats, set_user_pending_approval, approve_user, reject_user, pause_user()
         await query.edit_message_text(real_test_stats_message(stats), reply_markup=main_keyboard())
 
     elif data == "stats":
@@ -397,9 +478,11 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data[WAITING_SEED] = False
 
                 await update.message.reply_text(
-                    f"✅ 시드 자동조회 모드 설정 완료\n\nBingX 사용 가능 잔고 : ${available:,.2f}\n\n다음 진입부터 매번 거래소 잔고를 다시 조회해서 비중을 계산합니다.\n\n1차 2% : ${available*0.02:,.2f}\n2차 1% : ${available*0.01:,.2f}\n3차 1% : ${available*0.01:,.2f}\n\n상태 : 승인 대기 / PAPER 검증",
+                    f"✅ 시드 자동조회 모드 설정 완료\n\nBingX 사용 가능 잔고 : ${available:,.2f}\n\n다음 진입부터 매번 거래소 잔고를 다시 조회해서 비중을 계산합니다.\n\n1차 2% : ${available*0.02:,.2f}\n2차 1% : ${available*0.01:,.2f}\n3차 1% : ${available*0.01:,.2f}\n\n상태 : 승인 대기",
                     reply_markup=main_keyboard()
                 )
+                await update.message.reply_text(user_approval_waiting_message(), reply_markup=main_keyboard())
+                await send_admin_approval_request(context, update.effective_chat.id, available)
                 return
 
             if value <= 0:
@@ -408,9 +491,11 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_seed_fixed_mode(value)
             context.user_data[WAITING_SEED] = False
             await update.message.reply_text(
-                f"✅ 고정 시드 설정 완료\n\n기준 시드 : ${value:,.2f}\n\n1차 진입 : ${value*0.02:,.2f}\n2차 진입 : ${value*0.01:,.2f}\n3차 진입 : ${value*0.01:,.2f}\n\n상태 : 승인 대기 / PAPER 검증",
+                f"✅ 고정 시드 설정 완료\n\n기준 시드 : ${value:,.2f}\n\n1차 진입 : ${value*0.02:,.2f}\n2차 진입 : ${value*0.01:,.2f}\n3차 진입 : ${value*0.01:,.2f}\n\n상태 : 승인 대기",
                 reply_markup=main_keyboard()
             )
+            await update.message.reply_text(user_approval_waiting_message(), reply_markup=main_keyboard())
+            await send_admin_approval_request(context, update.effective_chat.id, value)
         except Exception:
             await update.message.reply_text("숫자로 입력해주세요. 예) 1000")
     else:
