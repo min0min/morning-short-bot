@@ -504,28 +504,30 @@ def live_profit_message(stats):
         stats = stats[-1] if stats and isinstance(stats[-1], dict) else {}
     if stats is None:
         stats = {}
+
     best = stats.get("best") or {}
     worst = stats.get("worst") or {}
 
     best_text = "없음"
     if best:
-        best_text = f"{best.get('symbol') or best.get('base')} {float(best.get('pnl_pct', 0) or 0):+.2f}% / {float(best.get('pnl', 0) or 0):+.4f} USDT"
+        best_text = f"{best.get('symbol') or best.get('base')} {float(best.get('pnl_pct', 0) or 0):+.2f}% / {float(best.get('pnl', 0) or 0):+.2f} USDT"
 
     worst_text = "없음"
     if worst:
-        worst_text = f"{worst.get('symbol') or worst.get('base')} {float(worst.get('pnl_pct', 0) or 0):+.2f}% / {float(worst.get('pnl', 0) or 0):+.4f} USDT"
+        worst_text = f"{worst.get('symbol') or worst.get('base')} {float(worst.get('pnl_pct', 0) or 0):+.2f}% / {float(worst.get('pnl', 0) or 0):+.2f} USDT"
 
     return f"""💵 내 수익 현황
 
-• 총 누적 수익: {float(stats.get('total_pnl', 0) or 0):+.4f} USDT
+• 총 누적 수익: {float(stats.get('total_pnl', 0) or 0):+.2f} USDT
 • 승률: {float(stats.get('win_rate', 0) or 0):.1f}% ({int(stats.get('wins', 0))}승 / {int(stats.get('losses', 0))}패)
 • 정산 완료: {int(stats.get('total', 0))}건 | 보유 중: {int(stats.get('holding', 0))}건
 
-• 이번 달: {float(stats.get('month_pnl', 0) or 0):+.4f} USDT
-• 이번 주: {float(stats.get('week_pnl', 0) or 0):+.4f} USDT
+• 이번 달: {float(stats.get('month_pnl', 0) or 0):+.2f} USDT
+• 이번 주: {float(stats.get('week_pnl', 0) or 0):+.2f} USDT
 
 🏆 최고 거래: {best_text}
 💔 최대 손실: {worst_text}"""
+
 
 def live_entry_success_message(pos, order_result, signal=None):
     e = pos.get("entries", [{}])[-1]

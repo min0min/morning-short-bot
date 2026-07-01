@@ -102,6 +102,12 @@ async def send_admin_approval_request(context, chat_id, balance=None):
     except Exception as e:
         print(f"[ADMIN APPROVAL SEND ERROR] {type(e).__name__}: {e}")
 
+
+def back_to_main_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("↩️ 메인 메뉴", callback_data="cancel_to_menu")]
+    ])
+
 async def send_main_menu(update_or_query):
     if hasattr(update_or_query, "message") and update_or_query.message:
         await update_or_query.message.reply_text(main_menu_text(), reply_markup=main_keyboard())
@@ -214,13 +220,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             stats = get_live_trade_stats()
             if isinstance(stats, tuple):
-                # 과거 잘못된 코드에서 tuple이 들어오는 경우 방어
                 stats = stats[-1] if stats and isinstance(stats[-1], dict) else {}
             msg = live_profit_message(stats)
         except Exception as e:
             msg = f"❌ 수익현황 조회 오류\n\n{type(e).__name__}: {e}"
 
-        await query.message.reply_text(msg, reply_markup=main_keyboard())
+        await query.message.reply_text(msg, reply_markup=back_to_main_keyboard())
         return
 
     elif data == "stats":
