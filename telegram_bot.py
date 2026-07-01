@@ -2,7 +2,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
 from config import TELEGRAM_BOT_TOKEN, BOT_VERSION, REAL_TEST_SYMBOL, REAL_TEST_MARGIN_USDT, ADMIN_CHAT_ID
-from storage import load_state, save_state, load_trades, calc_trade_stats, save_active_chat_id, save_bingx_api, mark_bingx_api_tested, set_seed_auto_mode, set_seed_fixed_mode, load_bingx_api, save_real_test_open, save_real_test_close, get_real_test_stats, get_live_trade_stats, set_user_pending_approval, approve_user, reject_user, pause_user
+from storage import load_state, save_state, load_trades, calc_trade_stats, save_active_chat_id, save_bingx_api, mark_bingx_api_tested, set_seed_auto_mode, set_seed_fixed_mode, load_bingx_api, save_real_test_open, save_real_test_close, get_real_test_stats, get_live_trade_stats, get_admin_user_snapshot, set_user_pending_approval, approve_user, reject_user, pause_user
 from messages import (
     main_menu_text,
     status_message,
@@ -28,6 +28,7 @@ from messages import (
     user_approved_message,
     user_rejected_message,
     start_blocked_by_approval_message,
+    admin_monitor_message,
 )
 from exchanges import get_crosslisted_futures_snapshot, get_exchange_debug_text
 from strategy import create_position
@@ -53,6 +54,7 @@ def main_keyboard():
         [InlineKeyboardButton("🧪 날짜 백테스트", callback_data="date_backtest")],
         [InlineKeyboardButton("🧪 최근 7일 자동 검증", callback_data="recent7_backtest")],
         [InlineKeyboardButton("🔍 거래소 디버그", callback_data="debug_exchange")],
+        [InlineKeyboardButton("👑 관리자", callback_data="admin_monitor")],
         [InlineKeyboardButton("🧪 실전 주문 테스트", callback_data="real_order_test"), InlineKeyboardButton("🧪 실전 테스트 청산", callback_data="real_close_test")],
         [InlineKeyboardButton("📢 안내사항", callback_data="notice")],
     ]
@@ -102,6 +104,12 @@ async def send_admin_approval_request(context, chat_id, balance=None):
     except Exception as e:
         print(f"[ADMIN APPROVAL SEND ERROR] {type(e).__name__}: {e}")
 
+
+
+def detail_back_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("↩️ 메인 메뉴", callback_data="back_to_main_edit")]
+    ])
 
 def back_to_main_keyboard():
     return InlineKeyboardMarkup([
@@ -169,6 +177,28 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"[PAUSE USER NOTIFY ERROR] {type(e).__name__}: {e}")
         return
 
+    if data == "back_to_main_edit":
+        await query.edit_message_text(main_menu_text(), reply_markup=main_keyboard())
+        return
+
+    elif data == "admin_monitor":
+        if not is_admin_chat(update.effective_chat.id):
+            await query.edit_message_text("⛔ 관리자만 접근할 수 있습니다.", reply_markup=main_keyboard())
+            return
+
+        balance = None
+        try:
+            api = load_bingx_api()
+            if api:
+                bal = await get_bingx_swap_balance(api["api_key"], api["api_secret"])
+                balance = bal.get("available_usdt")
+        except Exception as e:
+            print(f"[ADMIN MONITOR BALANCE ERROR] {type(e).__name__}: {e}")
+
+        snapshot = get_admin_user_snapshot()
+        await query.edit_message_text(admin_monitor_message(snapshot, balance), reply_markup=main_keyboard())
+        return
+
     if data == "seed":
         context.user_data[WAITING_SEED] = True
         await query.edit_message_text(seed_setting_message())
@@ -218,14 +248,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "profit":
         try:
-            stats = get_live_trade_stats()
+            stats = get_live_trade_stats, get_admin_user_snapshot()
             if isinstance(stats, tuple):
                 stats = stats[-1] if stats and isinstance(stats[-1], dict) else {}
             msg = live_profit_message(stats)
         except Exception as e:
             msg = f"❌ 수익현황 조회 오류\n\n{type(e).__name__}: {e}"
 
-        await query.message.reply_text(msg, reply_markup=back_to_main_keyboard())
+        await query.message.reply_text(msg, reply_markup=detail_back_keyboard())
         return
 
     elif data == "stats":
@@ -286,7 +316,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             results = await run_recent_days_backtest(7, threshold)
             msg = weekly_backtest_result_message(results, threshold)
-            await query.message.reply_text(msg, reply_markup=main_keyboard())
+            await query.message.reply_text(msg, reply_markup=detail_back_keyboard())
 
         except Exception as e:
             await query.message.reply_text(

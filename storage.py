@@ -685,3 +685,18 @@ def pause_user(chat_id=None):
 def is_user_approved():
     state = load_state()
     return state.get("approval_status") == "APPROVED"
+
+
+def get_admin_user_snapshot():
+    """
+    현재 단일 유저 운영 상태 스냅샷.
+    v4.5.5 기준은 단일 사용자 저장 구조이며,
+    다음 멀티유저 DB 단계에서 리스트 구조로 확장 예정.
+    """
+    state = load_state()
+    stats = get_live_trade_stats() if "get_live_trade_stats" in globals() else {}
+    return {
+        "state": state,
+        "stats": stats,
+        "api": load_bingx_api() is not None,
+    }

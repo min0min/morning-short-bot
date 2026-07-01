@@ -649,3 +649,43 @@ def start_blocked_by_approval_message(status):
 현재 승인 상태 : {approval_status_text(status)}
 
 관리자 승인 후 트레이딩을 시작할 수 있습니다."""
+
+
+def admin_monitor_message(snapshot, balance=None):
+    state = snapshot.get("state", {})
+    stats = snapshot.get("stats", {})
+    pos = state.get("live_position")
+    balance_text = f"{float(balance):,.2f} USDT" if balance is not None else "조회 실패/미등록"
+
+    if pos:
+        pos_text = f"{pos.get('base')} SHORT / {float(pos.get('last_pnl_pct', 0) or 0):+.2f}%"
+    else:
+        pos_text = "없음"
+
+    return f"""👑 관리자 모니터링
+
+현재 등록 유저:
+1명
+
+사용자:
+chat_id : {state.get('user_chat_id') or '-'}
+거래소 : BingX Futures
+API : {'✅ 등록됨' if snapshot.get('api') else '❌ 미등록'}
+승인 상태 : {approval_status_text(state.get('approval_status'))}
+트레이딩 : {'ON' if state.get('running') else 'OFF'}
+시드 방식 : {'자동조회' if state.get('seed_mode') == 'auto' else '고정'}
+선물 잔고 : {balance_text}
+가입일 : {state.get('joined_at') or '-'}
+
+현재 포지션:
+{pos_text}
+
+수익:
+누적 : {float(stats.get('total_pnl', 0) or 0):+.2f} USDT
+이번 주 : {float(stats.get('week_pnl', 0) or 0):+.2f} USDT
+승률 : {float(stats.get('win_rate', 0) or 0):.1f}%
+거래 : {int(stats.get('total', 0) or 0)}건
+
+관리 기능:
+승인/거절/보류는 승인 요청 카드에서 처리합니다.
+다음 단계에서 친구별 다중 유저 목록으로 확장합니다."""
