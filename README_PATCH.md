@@ -1,30 +1,26 @@
-# v4.3 Real Order Test Engine Patch
+# v4.3.1 BingX Order Rules Patch
 
-덮어쓸/추가 파일:
+덮어쓸 파일:
 - config.py
 - bingx.py
-- telegram_bot.py
 - messages.py
+- telegram_bot.py
 
-핵심 기능:
-- 버전: FINAL v4.3 REAL-ORDER-TEST
-- 실전 주문 테스트 버튼 추가
-- 실전 테스트 청산 버튼 추가
-- 기본 테스트 심볼: DOGE-USDT
-- 기본 테스트 금액: 1 USDT
-- 실제 BingX Futures Market SHORT 주문 전송
-- 현재 SHORT 포지션 조회 후 Market BUY 청산 테스트
+핵심 수정:
+- 버전: FINAL v4.3.1 ORDER-RULES
+- 1 USDT 테스트 주문이어도 BingX 거래소 최소 주문 규칙에 맞게 수량 자동 보정
+- BingX contract rule 조회:
+  - minQty / quantityPrecision / stepSize / minNotional 계열 자동 탐색
+- 주문 전:
+  - 요청 수량
+  - 최소 수량
+  - 실제 주문 수량
+  - 예상 주문금액
+  계산
+- BingX가 "minimum order amount is 28 DOGE" 같은 오류를 반환하면 숫자를 파싱해서 1회 자동 재시도
+- 주문 성공 메시지에 거래소 규칙 보정 여부 표시
 
 중요:
-- 이 버전은 전략 자동 실전 진입이 아님
-- 버튼을 눌러 확인한 경우에만 실제 주문 시도
-- BingX API에 Perpetual Futures Trading 권한이 필요
-- Withdraw / Transfer 권한은 절대 켜지 말 것
-- 최초 테스트는 반드시 1 USDT 수준으로만 진행
-
-다음 단계:
-- 주문 성공 확인
-- 포지션 생성 확인
-- 청산 성공 확인
-- 거래내역 저장/실전 TP/SL 연결
-- 이후 09:15 전략 자동 실전 주문 연결
+- 실제 주문입니다.
+- 요청 금액은 1 USDT여도, 거래소 최소 주문 수량 때문에 실제 주문금액은 1 USDT보다 커질 수 있습니다.
+- Withdraw / Transfer 권한은 절대 OFF 유지.

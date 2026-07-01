@@ -1,6 +1,7 @@
 import time
 import hmac
 import hashlib
+import math
 from urllib.parse import urlencode
 
 import aiohttp
@@ -337,5 +338,203 @@ async def close_short_market_position(api_key: str, api_secret: str, symbol: str
         "symbol": symbol,
         "qty": qty,
         "position": pos,
+        "raw": data,
+    }
+
+
+# =========================
+# v4.3.1 ORDER RULES PATCH
+# =========================
+
+def _safe_float(v, default=None):
+    try:
+        if v is None or v == "":
+            return default
+        return float(v)
+    except Exception:
+        return default
+
+def _detect_qty_step(contract: dict):
+    """
+    BingX contract response fields may vary.
+    Try common precision/step keys and fallback conservatively.
+    """
+    for key in ["quantityPrecision", "quantity_precision", "qtyPrecision", "amountPrecision", "volumePrecision"]:
+        val = contract.get(key)
+        if val is not None:
+            try:
+                p = int(float(val))
+                return 10 ** (-p), p
+            except Exception:
+                pass
+
+    for key in ["stepSize", "quantityStep", "qtyStep", "tradeStep", "minStep"]:
+        val = _safe_float(contract.get(key))
+        if val and val > 0:
+            # decimal places from step
+            s = f"{val:.12f}".rstrip("0")
+            p = len(s.split(".")[1]) if "." in s else 0
+            return val, p
+
+    return 1.0, 0
+
+def _detect_min_qty(contract: dict):
+    for key in [
+        "minQty", "minQuantity", "minTradeNum", "minTradeQuantity",
+        "minVolume", "minOrderQuantity", "minAmount"
+    ]:
+        val = _safe_float(contract.get(key))
+        if val and val > 0:
+            return val
+    return None
+
+def _detect_min_notional(contract: dict):
+    for key in ["minNotional", "minOrderValue", "minTradeAmount", "minOrderAmount"]:
+        val = _safe_float(contract.get(key))
+        if val and val > 0:
+            return val
+    return None
+
+def _ceil_to_step(value: float, step: float, precision: int):
+    if step <= 0:
+        return round(value, precision)
+    return round(math.ceil((value / step) - 1e-12) * step, precision)
+
+def _extract_min_qty_from_error(error_text: str):
+    """
+    Example:
+    The minimum order amount is 28 DOGE.
+    """
+    import re
+    m = re.search(r"minimum order amount is\s+([0-9]+(?:\.[0-9]+)?)", str(error_text), re.I)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except Exception:
+        return None
+
+async def get_bingx_contract_rule(symbol: str):
+    """
+    Get contract rule from BingX contracts endpoint.
+    """
+    symbol = normalize_bingx_symbol(symbol)
+    listing = await is_bingx_futures_listed(symbol)
+    contract = listing.get("contract") or {}
+
+    if not listing.get("listed"):
+        raise RuntimeError(f"{symbol} is not listed on BingX USDT-M futures.")
+
+    step, precision = _detect_qty_step(contract)
+    min_qty = _detect_min_qty(contract)
+    min_notional = _detect_min_notional(contract)
+
+    return {
+        "symbol": symbol,
+        "listed": True,
+        "raw_symbol": listing.get("raw_symbol") or symbol,
+        "contract": contract,
+        "qty_step": step,
+        "qty_precision": precision,
+        "min_qty": min_qty,
+        "min_notional": min_notional,
+    }
+
+async def calculate_market_qty_by_usdt(symbol: str, margin_usdt: float):
+    """
+    v4.3.1:
+    User can request 1 USDT, but actual order quantity is adjusted up to
+    BingX contract minimum qty / minimum notional where available.
+    """
+    symbol = normalize_bingx_symbol(symbol)
+    price = await get_bingx_symbol_price(symbol)
+    if price <= 0:
+        raise RuntimeError("가격이 0 이하입니다.")
+
+    rule = await get_bingx_contract_rule(symbol)
+
+    requested_qty = float(margin_usdt) / price
+    min_qty = rule.get("min_qty")
+    min_notional = rule.get("min_notional")
+    step = float(rule.get("qty_step") or 1.0)
+    precision = int(rule.get("qty_precision") or 0)
+
+    required_qty = requested_qty
+
+    if min_qty and min_qty > required_qty:
+        required_qty = min_qty
+
+    if min_notional and min_notional > 0:
+        notional_qty = min_notional / price
+        if notional_qty > required_qty:
+            required_qty = notional_qty
+
+    qty = _ceil_to_step(required_qty, step, precision)
+    actual_notional = qty * price
+
+    if qty <= 0:
+        raise RuntimeError("계산된 주문 수량이 0 이하입니다.")
+
+    return {
+        "symbol": symbol,
+        "price": price,
+        "requested_margin_usdt": float(margin_usdt),
+        "requested_qty": requested_qty,
+        "qty": qty,
+        "actual_notional_usdt": actual_notional,
+        "rule": rule,
+        "adjusted": qty > requested_qty,
+    }
+
+async def place_short_market_order(api_key: str, api_secret: str, symbol: str, margin_usdt: float):
+    """
+    v4.3.1 rule-aware market SHORT open.
+    If BingX still returns min amount error, retry once using min qty parsed from error.
+    """
+    calc = await calculate_market_qty_by_usdt(symbol, margin_usdt)
+
+    async def send(qty):
+        params = {
+            "symbol": calc["symbol"],
+            "side": "SELL",
+            "positionSide": "SHORT",
+            "type": "MARKET",
+            "quantity": qty,
+        }
+        return await _bingx_signed_request(api_key, api_secret, "POST", "/openApi/swap/v2/trade/order", params)
+
+    try:
+        data = await send(calc["qty"])
+    except Exception as e:
+        min_qty_from_err = _extract_min_qty_from_error(str(e))
+        if not min_qty_from_err:
+            raise
+
+        rule = calc["rule"]
+        step = float(rule.get("qty_step") or 1.0)
+        precision = int(rule.get("qty_precision") or 0)
+        retry_qty = _ceil_to_step(min_qty_from_err, step, precision)
+
+        if retry_qty <= calc["qty"]:
+            raise
+
+        print(f"[ORDER RULE RETRY] {calc['symbol']} qty {calc['qty']} -> {retry_qty} from exchange error")
+        calc["qty"] = retry_qty
+        calc["actual_notional_usdt"] = retry_qty * calc["price"]
+        calc["adjusted"] = True
+        calc["min_qty_from_error"] = min_qty_from_err
+        data = await send(calc["qty"])
+
+    return {
+        "ok": True,
+        "action": "OPEN_SHORT",
+        "symbol": calc["symbol"],
+        "qty": calc["qty"],
+        "price_ref": calc["price"],
+        "margin_usdt": calc["requested_margin_usdt"],
+        "requested_qty": calc["requested_qty"],
+        "actual_notional_usdt": calc["actual_notional_usdt"],
+        "adjusted": calc["adjusted"],
+        "rule": calc["rule"],
         "raw": data,
     }

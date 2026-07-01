@@ -348,7 +348,7 @@ def real_order_test_warning_message(symbol="DOGE-USDT", margin_usdt=1.0):
 심볼 : {symbol}
 방향 : SHORT
 주문 방식 : Market
-테스트 금액 : 약 ${margin_usdt:.2f}
+요청 금액 : 약 ${margin_usdt:.2f}\n※ 거래소 최소 주문 수량에 맞춰 실제 주문금액은 자동 보정될 수 있습니다.
 
 주의:
 ✅ 실전 주문입니다.
@@ -364,19 +364,37 @@ def real_order_success_message(result):
     data = raw.get("data")
     if isinstance(data, dict):
         order_id = data.get("orderId") or data.get("orderID") or data.get("id") or "-"
+
+    adjusted_text = "아니오"
+    if result.get("adjusted"):
+        adjusted_text = "예"
+
+    rule = result.get("rule", {})
+    min_qty = rule.get("min_qty")
+    min_notional = rule.get("min_notional")
+
     return f"""✅ 실전 테스트 주문 성공
 
 거래소 : BingX Futures
 동작 : SHORT 진입
 심볼 : {result.get('symbol')}
-수량 : {result.get('qty')}
-참고가격 : {result.get('price_ref')}
-테스트 금액 : ${result.get('margin_usdt')}
+
+요청 금액 : ${float(result.get('margin_usdt', 0)):,.2f}
+참고 가격 : {result.get('price_ref')}
+
+요청 수량 : {float(result.get('requested_qty', 0)):,.6f}
+실제 주문 수량 : {result.get('qty')}
+예상 주문금액 : ${float(result.get('actual_notional_usdt', 0)):,.2f}
+
+거래소 규칙 자동보정 : {adjusted_text}
+최소 수량 : {min_qty if min_qty else '거래소 응답 기준'}
+최소 금액 : {min_notional if min_notional else '거래소 응답 기준'}
 
 Order ID : {order_id}
 
 다음 단계:
 🧪 실전 테스트 청산 버튼으로 포지션 청산을 확인하세요."""
+
 
 def real_order_fail_message(error):
     return f"""❌ 실전 테스트 주문 실패
@@ -387,7 +405,7 @@ def real_order_fail_message(error):
 1. BingX API에 Perpetual Futures Trading 권한이 켜져 있는지
 2. 출금 권한은 꺼져 있는지
 3. Futures 계정에 사용 가능 USDT가 있는지
-4. 최소 주문 수량/금액 조건을 충족하는지"""
+4. 거래소 최소 주문 수량/금액 규칙 확인"""
 
 def real_close_success_message(result):
     raw = result.get("raw", {})
