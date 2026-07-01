@@ -1009,3 +1009,66 @@ def mark_bingx_api_tested(ok=True):
     save_state(state)
     print(f"[BINGX API TESTED] chat_id={state.get('user_chat_id')} ok={bool(ok)}")
     return state
+
+
+# v4.6.3 ADMIN DASHBOARD HELPERS
+def calc_user_operating_amount(state):
+    """
+    관리자 대시보드용 운용금액.
+    seed_mode=auto면 실시간 잔고가 우선이지만 여기서는 저장값 기준 fallback.
+    실제 BingX 잔고는 telegram_bot.py에서 balance_map으로 주입한다.
+    """
+    if state.get("seed_mode") == "fixed":
+        return float(state.get("seed_usdt", 0) or 0)
+    return 0.0
+
+def calc_user_trade_stats_from_state(state):
+    closed = [t for t in state.get("trades", []) if t.get("type") == "CLOSE"]
+    total = len(closed)
+    wins = losses = 0
+    total_pnl = 0.0
+    week_pnl = 0.0
+    month_pnl = 0.0
+    best = None
+    worst = None
+    now = datetime.now()
+
+    for t in closed:
+        p = t.get("position", {})
+        pnl = float(p.get("realized_pnl", 0) or 0)
+        pct = float(p.get("pnl_pct", 0) or 0)
+        total_pnl += pnl
+
+        if pnl > 0:
+            wins += 1
+        elif pnl < 0:
+            losses += 1
+
+        try:
+            created = datetime.fromisoformat(t.get("created_at"))
+        except Exception:
+            created = now
+
+        if created.year == now.year and created.month == now.month:
+            month_pnl += pnl
+        if (now - created).days <= 7:
+            week_pnl += pnl
+
+        item = {"symbol": p.get("symbol"), "base": p.get("base"), "pnl": pnl, "pnl_pct": pct}
+        if best is None or pct > float(best.get("pnl_pct", -999999)):
+            best = item
+        if worst is None or pct < float(worst.get("pnl_pct", 999999)):
+            worst = item
+
+    return {
+        "total": total,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": (wins / total * 100) if total else 0.0,
+        "total_pnl": total_pnl,
+        "week_pnl": week_pnl,
+        "month_pnl": month_pnl,
+        "holding": 1 if state.get("live_position") else 0,
+        "best": best,
+        "worst": worst,
+    }

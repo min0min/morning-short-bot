@@ -658,19 +658,25 @@ def admin_monitor_message(snapshot, balance=None):
     balance_map = balance if isinstance(balance, dict) else {}
 
     lines = ""
+    total_balance = 0.0
     total_pnl = 0.0
     running_count = 0
     approved_count = 0
+    pending_count = 0
     holding_count = 0
 
     for idx, u in enumerate(users, 1):
         uid = str(u.get("user_chat_id") or "-")
         bal = balance_map.get(uid)
-        bal_text = f"{float(bal):,.2f} USDT" if bal is not None else "조회 실패/미등록"
-        status = approval_status_text(u.get("approval_status"))
-        running = "ON" if u.get("running") else "OFF"
-        if u.get("approval_status") == "APPROVED":
+        bal_float = float(bal) if bal is not None else 0.0
+        total_balance += bal_float
+
+        status_raw = u.get("approval_status")
+        status = approval_status_text(status_raw)
+        if status_raw == "APPROVED":
             approved_count += 1
+        if status_raw == "PENDING":
+            pending_count += 1
         if u.get("running"):
             running_count += 1
 
@@ -681,7 +687,6 @@ def admin_monitor_message(snapshot, balance=None):
         else:
             pos_text = "없음"
 
-        # user stats from embedded trades
         closed = [t for t in u.get("trades", []) if t.get("type") == "CLOSE"]
         pnl = sum(float((t.get("position") or {}).get("realized_pnl", 0) or 0) for t in closed)
         total_pnl += pnl
@@ -689,13 +694,20 @@ def admin_monitor_message(snapshot, balance=None):
         losses = sum(1 for t in closed if float((t.get("position") or {}).get("realized_pnl", 0) or 0) < 0)
         win_rate = (wins / len(closed) * 100) if closed else 0.0
 
-        lines += f"""[{idx}] chat_id: {uid}
-상태: {status} / 트레이딩 {running}
-API: {'✅' if u.get('api_registered') else '❌'} / 시드: {'자동조회' if u.get('seed_mode') == 'auto' else '고정'}
-잔고: {bal_text}
-포지션: {pos_text}
-손익: {pnl:+.2f} USDT / 승률 {win_rate:.1f}% ({wins}승/{losses}패)
-가입일: {u.get('joined_at') or '-'}
+        seed_mode = "자동조회" if u.get("seed_mode") == "auto" else "고정"
+        bal_text = f"{bal_float:,.2f} USDT" if bal is not None else "조회 실패/미등록"
+        running_text = "ON" if u.get("running") else "OFF"
+
+        lines += f"""[{idx}] 사용자
+chat_id : {uid}
+상태 : {status} / 트레이딩 {running_text}
+API : {'✅ 등록' if u.get('api_registered') else '❌ 미등록'} / 시드 : {seed_mode}
+운용금액 : {bal_text}
+포지션 : {pos_text}
+손익 : {pnl:+.2f} USDT
+승률 : {win_rate:.1f}% ({wins}승/{losses}패)
+거래수 : {len(closed)}건
+가입일 : {u.get('joined_at') or '-'}
 
 """
 
@@ -704,17 +716,22 @@ API: {'✅' if u.get('api_registered') else '❌'} / 시드: {'자동조회' if 
 
     return f"""👑 관리자 대시보드
 
-전체 유저: {len(users)}명
-승인 완료: {approved_count}명
-트레이딩 ON: {running_count}명
-포지션 보유: {holding_count}명
-전체 누적 손익: {total_pnl:+.2f} USDT
+전체 유저 : {len(users)}명
+승인 완료 : {approved_count}명
+승인 대기 : {pending_count}명
+트레이딩 ON : {running_count}명
+포지션 보유 : {holding_count}명
+
+전체 운용금액 : {total_balance:,.2f} USDT
+전체 누적 손익 : {total_pnl:+.2f} USDT
 
 ━━━━━━━━━━━━━━
 {lines}━━━━━━━━━━━━━━
 관리 기능:
 🔄 새로고침
 ⏸ 전체 강제 중지
+✅ 승인 / ❌ 거절 / ⏸ 보류는 승인 요청 카드에서 처리
 
 ※ 관리자 버튼은 ADMIN_CHAT_ID와 일치하는 계정에만 표시됩니다.
 ※ 각 유저는 chat_id별 API/시드/승인/포지션/거래내역이 독립 저장됩니다."""
+
