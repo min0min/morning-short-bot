@@ -211,8 +211,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(msg, reply_markup=main_keyboard())
 
     elif data == "profit":
-        stats = get_real_test_stats, get_live_trade_stats, set_user_pending_approval, approve_user, reject_user, pause_user()
-        await query.message.reply_text(live_profit_message(stats), reply_markup=main_keyboard())
+        try:
+            stats = get_live_trade_stats()
+            if isinstance(stats, tuple):
+                # 과거 잘못된 코드에서 tuple이 들어오는 경우 방어
+                stats = stats[-1] if stats and isinstance(stats[-1], dict) else {}
+            msg = live_profit_message(stats)
+        except Exception as e:
+            msg = f"❌ 수익현황 조회 오류\n\n{type(e).__name__}: {e}"
+
+        await query.message.reply_text(msg, reply_markup=main_keyboard())
         return
 
     elif data == "stats":

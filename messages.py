@@ -499,6 +499,11 @@ def real_test_stats_message(stats):
 
 
 def live_profit_message(stats):
+    # tuple 방어: 과거 콜백 버그로 stats가 tuple로 들어오면 마지막 dict만 사용
+    if isinstance(stats, tuple):
+        stats = stats[-1] if stats and isinstance(stats[-1], dict) else {}
+    if stats is None:
+        stats = {}
     best = stats.get("best") or {}
     worst = stats.get("worst") or {}
 
